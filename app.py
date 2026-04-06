@@ -65,8 +65,14 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
         req.headers = {k.lower(): v for k, v in self.headers.items()}
         req.content_type = req.headers.get('content-type', '')
 
-        # Read body
+        # Read body — enforce max upload size
         content_length = int(req.headers.get('content-length', 0))
+        if content_length > MAX_UPLOAD_SIZE:
+            self.send_response(413)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(b'{"error":"Request too large"}')
+            return req
         if content_length > 0:
             req.body = self.rfile.read(content_length)
 
@@ -138,7 +144,7 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 import traceback
                 traceback.print_exc()
-                self._send_response(jsonify({"error": str(e)}, status=500))
+                self._send_response(jsonify({"error": "Internal server error"}, status=500))
             return
 
         # Audio streaming with range requests
@@ -147,20 +153,20 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
             self._serve_audio(audio_match.group(1), req)
             return
 
-        # Cover images
-        cover_match = re.match(r'^/api/covers/(.+)$', req.path)
+        # Cover images — basename only, no path traversal
+        cover_match = re.match(r'^/api/covers/([^/]+)$', req.path)
         if cover_match:
-            self._serve_file(COVERS_DIR, cover_match.group(1))
+            self._serve_file(COVERS_DIR, os.path.basename(cover_match.group(1)))
             return
 
         # Static files / SPA
         self._serve_static(req.path)
 
     def _serve_audio(self, drop_id, req):
-        """Serve audio with range request support."""
+        """Serve audio with range request support. Requires access for non-open drops."""
         conn = get_db()
         try:
-            drop = conn.execute("SELECT audio_path, status FROM drops WHERE id = ?", (drop_id,)).fetchone()
+            drop = conn.execute("SELECT audio_path, status, drop_type FROM drops WHERE id = ?", (drop_id,)).fetchone()
         finally:
             conn.close()
 
@@ -171,6 +177,27 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
         if drop["status"] == "locked":
             self._send_response(jsonify({"error": "Drop is locked"}, status=403))
             return
+
+        # For non-open drops, verify the user has claimed access
+        if drop["drop_type"] != "open":
+            from auth import decode_token
+            auth_header = req.headers.get("authorization", "")
+            authed = False
+            if auth_header.startswith("Bearer "):
+                payload = decode_token(auth_header[7:])
+                if payload:
+                    conn = get_db()
+                    try:
+                        access = conn.execute(
+                            "SELECT id FROM drop_access WHERE user_id = ? AND drop_id = ?",
+                            (payload["sub"], drop_id),
+                        ).fetchone()
+                        authed = access is not None
+                    finally:
+                        conn.close()
+            if not authed:
+                self._send_response(jsonify({"error": "Access required"}, status=403))
+                return
 
         filename = os.path.basename(drop["audio_path"])
         filepath = os.path.join(AUDIO_DIR, filename)
@@ -218,8 +245,12 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _serve_file(self, directory, filename):
-        """Serve a static file from a directory."""
-        filepath = os.path.join(directory, filename)
+        """Serve a static file from a directory. Guards against path traversal."""
+        # Resolve and confirm the file stays inside directory
+        filepath = os.path.realpath(os.path.join(directory, filename))
+        if not filepath.startswith(os.path.realpath(directory) + os.sep):
+            self._send_response(jsonify({"error": "Forbidden"}, status=403))
+            return
         if not os.path.isfile(filepath):
             self._send_response(jsonify({"error": "File not found"}, status=404))
             return

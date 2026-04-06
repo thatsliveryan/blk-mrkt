@@ -92,7 +92,7 @@ def register(req):
         conn.close()
         if "UNIQUE" in str(e):
             return jsonify({"error": "Username or email already taken"}, 409), 409
-        return jsonify({"error": str(e)}, 500), 500
+        return jsonify({"error": "Registration failed"}, 500), 500
     conn.close()
 
     access = create_token(user_id, role, "access")
