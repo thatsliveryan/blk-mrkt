@@ -83,17 +83,19 @@ def create_drop(req):
         os.makedirs(COVERS_DIR, exist_ok=True)
         cover_file.save(os.path.join(COVERS_DIR, f"{drop_id}.{ext}"))
 
+    city = (data.get("city") or "").strip() or None
+
     conn = get_db()
     try:
         conn.execute(
             """INSERT INTO drops
             (id, artist_id, title, description, audio_path, cover_image_path,
              drop_type, total_supply, remaining_supply, access_price, own_price,
-             starts_at, expires_at, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             starts_at, expires_at, status, city)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (drop_id, srv.g.user_id, title, data.get("description", ""),
              audio_path, cover_path, drop_type, total_supply, total_supply,
-             access_price, own_price, starts_at, expires_at, "scheduled"),
+             access_price, own_price, starts_at, expires_at, "scheduled", city),
         )
         scene_ids = data.get("scene_ids")
         if scene_ids:
@@ -186,21 +188,42 @@ def get_drop(req, drop_id):
     drop["engagement"] = get_engagement_stats(drop_id)
     get_drop_status_info(drop)
 
-    # Check access
+    # Ownership ledger — how many people own this drop + first 10 owners for social proof
+    conn = get_db()
+    try:
+        owner_count = conn.execute(
+            "SELECT COUNT(*) as c FROM drop_access WHERE drop_id = ? AND access_type = 'own'",
+            (drop_id,),
+        ).fetchone()["c"]
+        first_owners = rows_to_list(conn.execute(
+            """SELECT u.username, u.avatar_url, da.acquired_at, da.fan_number
+               FROM drop_access da JOIN users u ON da.user_id = u.id
+               WHERE da.drop_id = ? AND da.access_type = 'own'
+               ORDER BY da.acquired_at ASC LIMIT 10""",
+            (drop_id,),
+        ).fetchall())
+    finally:
+        conn.close()
+    drop["owner_count"] = owner_count
+    drop["first_owners"] = first_owners
+
+    # Check access for authenticated user
     auth_header = req.headers.get("authorization", "")
     drop["user_has_access"] = False
     drop["user_access_type"] = None
+    drop["user_fan_number"] = None
     if auth_header.startswith("Bearer "):
         payload = decode_token(auth_header[7:])
         if payload:
             conn = get_db()
             try:
                 access = row_to_dict(conn.execute(
-                    "SELECT * FROM drop_access WHERE user_id = ? AND drop_id = ?",
+                    "SELECT * FROM drop_access WHERE user_id = ? AND drop_id = ? ORDER BY access_type DESC LIMIT 1",
                     (payload["sub"], drop_id),
                 ).fetchone())
                 drop["user_has_access"] = access is not None
                 drop["user_access_type"] = access["access_type"] if access else None
+                drop["user_fan_number"] = access["fan_number"] if access else None
             finally:
                 conn.close()
 
@@ -250,9 +273,15 @@ def claim_access(req, drop_id):
             if cur.rowcount == 0:
                 return jsonify({"error": "SOLD_OUT", "message": "This drop is sold out"}, 410), 410
 
+        # Record which fan number this is (for First-N badge)
+        fan_number = conn.execute(
+            "SELECT COUNT(*) as c FROM drop_access WHERE drop_id = ? AND access_type = ?",
+            (drop_id, access_type),
+        ).fetchone()["c"] + 1  # +1 because we haven't inserted yet
+
         conn.execute(
-            "INSERT INTO drop_access (user_id, drop_id, access_type, price_paid) VALUES (?, ?, ?, ?)",
-            (srv.g.user_id, drop_id, access_type, price),
+            "INSERT INTO drop_access (user_id, drop_id, access_type, price_paid, fan_number) VALUES (?, ?, ?, ?, ?)",
+            (srv.g.user_id, drop_id, access_type, price, fan_number),
         )
         conn.commit()
 
@@ -263,7 +292,134 @@ def claim_access(req, drop_id):
     finally:
         conn.close()
 
-    return jsonify({"message": "Access granted", "access_type": access_type, "price_paid": price, "drop_id": drop_id}, 201), 201
+    return jsonify({
+        "message": "Access granted",
+        "access_type": access_type,
+        "price_paid": price,
+        "drop_id": drop_id,
+        "fan_number": fan_number,
+        "badge": f"First {fan_number}" if fan_number <= 100 else None,
+    }, 201), 201
+
+
+@drops_bp.route("/collection", methods=["GET"])
+@require_auth
+def my_collection(req):
+    """Fan's claimed drops collection (stream + own)."""
+    conn = get_db()
+    try:
+        drops = rows_to_list(conn.execute(
+            """SELECT d.*, u.username as artist_name, u.avatar_url as artist_avatar,
+                      da.access_type, da.acquired_at, da.price_paid, da.fan_number
+               FROM drop_access da
+               JOIN drops d ON da.drop_id = d.id
+               JOIN users u ON d.artist_id = u.id
+               WHERE da.user_id = ?
+               ORDER BY da.acquired_at DESC""",
+            (srv.g.user_id,),
+        ).fetchall())
+    finally:
+        conn.close()
+
+    for d in drops:
+        get_drop_status_info(d)
+        if d.get("fan_number") and d["fan_number"] <= 100:
+            d["badge"] = f"First {d['fan_number']}"
+        else:
+            d["badge"] = None
+
+    return jsonify({"drops": drops, "count": len(drops)})
+
+
+@drops_bp.route("/my", methods=["GET"])
+@require_auth
+@require_role("artist", "admin")
+def my_drops(req):
+    """Artist's own drops."""
+    status_filter = req.args.get("status")
+    conn = get_db()
+    try:
+        if status_filter:
+            drops = rows_to_list(conn.execute(
+                "SELECT * FROM drops WHERE artist_id = ? AND status = ? ORDER BY created_at DESC",
+                (srv.g.user_id, status_filter),
+            ).fetchall())
+        else:
+            drops = rows_to_list(conn.execute(
+                "SELECT * FROM drops WHERE artist_id = ? ORDER BY created_at DESC",
+                (srv.g.user_id,),
+            ).fetchall())
+    finally:
+        conn.close()
+
+    ids_starts = [(d["id"], d["starts_at"]) for d in drops]
+    velocities = calc_velocity_bulk(ids_starts)
+    for d in drops:
+        d["velocity"] = velocities.get(d["id"], 0)
+        get_drop_status_info(d)
+
+    return jsonify({"drops": drops, "count": len(drops)})
+
+
+@drops_bp.route("/trending/city/:city", methods=["GET"])
+def trending_by_city(req, city):
+    """City-level trending — the local leaderboard."""
+    transition_drop_states()
+    conn = get_db()
+    try:
+        # Match by drop city OR artist city
+        drops = rows_to_list(conn.execute(
+            """SELECT d.*, u.username as artist_name, u.avatar_url as artist_avatar,
+                      u.city as artist_city
+               FROM drops d JOIN users u ON d.artist_id = u.id
+               WHERE d.status IN ('live', 'expired')
+               AND (LOWER(d.city) = LOWER(?) OR LOWER(u.city) = LOWER(?))
+               AND d.starts_at >= datetime('now', '-72 hours')
+               ORDER BY d.starts_at DESC LIMIT 20""",
+            (city, city),
+        ).fetchall())
+    finally:
+        conn.close()
+
+    ids_starts = [(d["id"], d["starts_at"]) for d in drops]
+    velocities = calc_velocity_bulk(ids_starts)
+    for d in drops:
+        d["velocity"] = velocities.get(d["id"], 0)
+        get_drop_status_info(d)
+    drops.sort(key=lambda d: d["velocity"], reverse=True)
+
+    return jsonify({"city": city, "drops": drops, "count": len(drops)})
+
+
+@drops_bp.route("/:drop_id", methods=["PATCH"])
+@require_auth
+@require_role("artist", "admin")
+def update_drop(req, drop_id):
+    """Update drop metadata or status (owner or admin only)."""
+    conn = get_db()
+    try:
+        drop = row_to_dict(conn.execute("SELECT * FROM drops WHERE id = ?", (drop_id,)).fetchone())
+        if not drop:
+            return jsonify({"error": "Drop not found"}, 404), 404
+        if drop["artist_id"] != srv.g.user_id and getattr(srv.g, "role", "") != "admin":
+            return jsonify({"error": "Forbidden"}, 403), 403
+
+        data = req.get_json(silent=True) or {}
+        updates = {}
+        allowed = ["title", "description", "status", "expires_at", "city"]
+        for field in allowed:
+            if field in data:
+                updates[field] = data[field]
+
+        if updates:
+            set_clause = ", ".join(f"{k} = ?" for k in updates)
+            vals = list(updates.values()) + [drop_id]
+            conn.execute(f"UPDATE drops SET {set_clause} WHERE id = ?", vals)
+            conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({"message": "Drop updated", "drop_id": drop_id, "updated": list(updates.keys())})
 
 
 @drops_bp.route("/:drop_id/engage", methods=["POST"])

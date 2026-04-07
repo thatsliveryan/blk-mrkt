@@ -25,6 +25,8 @@ from scenes import scenes_bp
 from users import users_bp
 from admin import admin_bp
 from labels import labels_bp
+from boosts import boosts_bp
+from subscriptions import subs_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(drops_bp)
@@ -32,6 +34,8 @@ app.register_blueprint(scenes_bp)
 app.register_blueprint(users_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(labels_bp)
+app.register_blueprint(boosts_bp)
+app.register_blueprint(subs_bp)
 
 
 # ---------------------------------------------------------------------------

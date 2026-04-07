@@ -78,6 +78,30 @@ CREATE TABLE IF NOT EXISTS drop_scenes (
     PRIMARY KEY (drop_id, scene_id)
 );
 
+CREATE TABLE IF NOT EXISTS boosts (
+    id TEXT PRIMARY KEY,
+    drop_id TEXT NOT NULL REFERENCES drops(id),
+    artist_id TEXT NOT NULL REFERENCES users(id),
+    budget REAL NOT NULL,
+    spent REAL NOT NULL DEFAULT 0,
+    target_city TEXT,
+    target_scene_id TEXT REFERENCES scenes(id),
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'exhausted')),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS artist_subscriptions (
+    id TEXT PRIMARY KEY,
+    fan_id TEXT NOT NULL REFERENCES users(id),
+    artist_id TEXT NOT NULL REFERENCES users(id),
+    tier TEXT NOT NULL DEFAULT 'basic' CHECK(tier IN ('basic', 'premium')),
+    price_monthly REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'cancelled')),
+    started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    cancelled_at TEXT,
+    UNIQUE(fan_id, artist_id)
+);
+
 CREATE TABLE IF NOT EXISTS labels (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -122,6 +146,21 @@ def init_db():
     """Initialize the database schema."""
     conn = get_db()
     conn.executescript(SCHEMA)
+
+    # Migration: add columns that may not exist in older DBs
+    migrations = [
+        "ALTER TABLE drops ADD COLUMN city TEXT",
+        "ALTER TABLE drops ADD COLUMN boost_active INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE drop_access ADD COLUMN fan_number INTEGER",  # which # fan were they?
+        "ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN follower_count INTEGER NOT NULL DEFAULT 0",
+    ]
+    for sql in migrations:
+        try:
+            conn.execute(sql)
+        except Exception:
+            pass  # Column already exists
+
     conn.commit()
     conn.close()
 

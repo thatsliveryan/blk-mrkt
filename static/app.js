@@ -163,12 +163,14 @@ function navItems() {
   ];
   if (role === 'fan') all.push(
     { v: 'collection',       icon: '📦', label: 'Collection' },
+    { v: 'fan-subscriptions',icon: '⭐', label: 'Following' },
     { v: 'fan-profile',      icon: '👤', label: 'Profile' },
   );
   if (role === 'artist') all.push(
     { v: 'artist-dashboard', icon: '📊', label: 'Dashboard' },
     { v: 'artist-drops',     icon: '💿', label: 'My Drops' },
     { v: 'create-drop',      icon: '＋', label: 'Drop' },
+    { v: 'artist-boosts',    icon: '🚀', label: 'Boost' },
     { v: 'artist-revenue',   icon: '💰', label: 'Revenue' },
     { v: 'artist-profile',   icon: '👤', label: 'Profile' },
   );
@@ -316,13 +318,16 @@ function getViewContent() {
     // Shared
     case 'feed':              return renderFeed();
     case 'drop-detail':       return renderDropDetail();
+    case 'city-trending':     return renderCityTrending();
     // Fan
     case 'collection':        return renderCollection();
+    case 'fan-subscriptions': return renderFanSubscriptions();
     case 'fan-profile':       return renderFanProfile();
     // Artist
     case 'artist-dashboard':  return renderArtistDashboard();
     case 'artist-drops':      return renderArtistDrops();
     case 'create-drop':       return renderCreateDrop();
+    case 'artist-boosts':     return renderArtistBoosts();
     case 'edit-drop':         return renderEditDrop();
     case 'artist-revenue':    return renderArtistRevenue();
     case 'artist-profile':    return renderArtistProfile();
@@ -347,9 +352,12 @@ function afterRender() {
   switch (state.view) {
     case 'feed':              loadFeed(); break;
     case 'collection':        loadCollection(); break;
+    case 'fan-subscriptions': loadFanSubscriptions(); break;
     case 'fan-profile':       loadFanProfile(); break;
+    case 'city-trending':     loadCityTrending(); break;
     case 'artist-dashboard':  loadArtistDashboard(); break;
     case 'artist-drops':      loadArtistDropsList(); break;
+    case 'artist-boosts':     loadArtistBoosts(); break;
     case 'artist-revenue':    loadArtistRevenue(); break;
     case 'label-roster':      loadLabelRoster(); break;
     case 'label-drops':       loadLabelDropsList(); break;
@@ -503,10 +511,12 @@ window.handleAuth = async function(e) {
 // FEED (shared — all roles)
 // ============================================================
 function renderFeed() {
-  return pageWrap('DROPS', 'Scarcity-driven music releases', `
+  const city = state.user?.city || '';
+  return pageWrap('DROPS', 'The underground has an address now.', `
     <div class="tab-bar">
       <div class="tab ${state.feedTab==='live'?'active':''}" onclick="switchFeedTab('live')">LIVE NOW</div>
       <div class="tab ${state.feedTab==='trending'?'active':''}" onclick="switchFeedTab('trending')">TRENDING</div>
+      ${city ? `<div class="tab ${state.feedTab==='city'?'active':''}" onclick="switchFeedTab('city')">📍 ${esc(city).toUpperCase()}</div>` : ''}
       <div class="tab ${state.feedTab==='scenes'?'active':''}" onclick="switchFeedTab('scenes')">SCENES</div>
     </div>
     <div id="feed-content"><div class="loading"><div class="spinner"></div></div></div>
@@ -535,16 +545,37 @@ async function loadFeed() {
       el.innerHTML = drops.length
         ? `<div class="drops-grid">${drops.map(renderDropCard).join('')}</div>`
         : emptyState('🔥', 'Nothing trending yet', 'Be the first to drop');
+    } else if (state.feedTab === 'city') {
+      const city = state.user?.city;
+      if (!city) { el.innerHTML = emptyState('📍', 'Set your city', 'Update your profile to see local drops'); return; }
+      const d = await API.json(`/drops/trending/city/${encodeURIComponent(city)}`);
+      drops = d.drops || [];
+      el.innerHTML = drops.length
+        ? `<div class="city-trending-header">Trending in <strong>${esc(city)}</strong></div><div class="drops-grid">${drops.map(renderDropCard).join('')}</div>`
+        : emptyState('📍', `No drops in ${esc(city)} yet`, 'Be the first artist to drop here');
     } else {
       const d = await API.json('/scenes');
       scenes = d.scenes || [];
       el.innerHTML = scenes.length
         ? `<div class="drops-grid">${scenes.map(renderSceneCard).join('')}</div>`
-        : emptyState('🌍', 'No scenes yet', 'Scenes are collections of drops by city/genre');
+        : emptyState('🌍', 'No scenes yet', 'Scenes are communities built around a sound or city');
     }
   } catch (e) {
     if (el) el.innerHTML = emptyState('⚠️', 'Failed to load', e.error || 'Try refreshing');
   }
+}
+
+const DROP_TYPE_META = {
+  open:    { label: 'OPEN',    color: '#22c55e', desc: 'No limits' },
+  timed:   { label: 'TIMED',   color: '#f59e0b', desc: 'Limited time' },
+  limited: { label: 'LIMITED', color: '#ef4444', desc: 'Limited qty' },
+  tiered:  { label: 'TIERED',  color: '#8b5cf6', desc: 'Tiered access' },
+  rare:    { label: 'RARE',    color: '#ec4899', desc: 'Permanent rare' },
+};
+
+function dropTypeBadge(type) {
+  const m = DROP_TYPE_META[type] || { label: type?.toUpperCase(), color: '#666' };
+  return `<span class="drop-type-badge" style="background:${m.color}">${m.label}</span>`;
 }
 
 function renderDropCard(d) {
@@ -553,21 +584,27 @@ function renderDropCard(d) {
   const sp = d.supply_pct || 0;
   const barClass = sp > 80 ? 'critical' : sp > 60 ? 'low' : '';
   const hot = vel >= 50;
+  const isSoldOut = d.is_sold_out;
   return `
-    <div class="drop-card ${hot ? 'hot' : ''}" onclick="openDrop('${d.id}')">
+    <div class="drop-card ${hot ? 'hot' : ''} ${isSoldOut ? 'sold-out' : ''}" onclick="openDrop('${d.id}')">
       <div class="cover">
         ${cv ? `<img src="${cv}" alt="">` : `<div class="no-cover">🎵</div>`}
-        <span class="status-badge ${d.status}">${d.status === 'live' ? 'LIVE' : d.status === 'scheduled' ? 'SOON' : 'ENDED'}</span>
+        <span class="status-badge ${d.status}">${d.status === 'live' ? 'LIVE' : d.status === 'scheduled' ? 'SOON' : isSoldOut ? 'SOLD OUT' : 'ENDED'}</span>
         ${vel > 0 ? `<span class="vel-badge">${velEmoji(vel)}</span>` : ''}
+        ${d.boost_active ? `<span class="boost-badge">🚀 BOOSTED</span>` : ''}
       </div>
       <div class="card-body">
-        <div class="drop-title">${esc(d.title)}</div>
-        <div class="drop-artist-name">@${esc(d.artist_name || 'unknown')}</div>
+        <div class="drop-header-row">
+          <div class="drop-title">${esc(d.title)}</div>
+          ${dropTypeBadge(d.drop_type)}
+        </div>
+        <div class="drop-artist-name">@${esc(d.artist_name || 'unknown')}${d.artist_city ? ` · ${esc(d.artist_city)}` : ''}</div>
         ${d.total_supply != null ? `
           <div class="supply-wrap">
             <div class="supply-bar-track"><div class="supply-bar-fill ${barClass}" style="width:${sp}%"></div></div>
-            <div class="supply-text">${(d.total_supply - d.remaining_supply)}/${d.total_supply} claimed</div>
-          </div>` : '<div class="supply-text">OPEN</div>'}
+            <div class="supply-text">${(d.total_supply - (d.remaining_supply || 0))}/${d.total_supply} claimed${d.owner_count > 0 ? ` · ${d.owner_count} owners` : ''}</div>
+          </div>` : '<div class="supply-text">OPEN ACCESS</div>'}
+        ${d.access_price > 0 ? `<div class="price-tag">${fmtMoney(d.access_price)}</div>` : '<div class="price-tag free">FREE</div>'}
         ${d.countdown_seconds > 0 ? `<div class="drop-countdown ${d.countdown_seconds < 3600 ? 'urgent' : ''}" data-cd="${d.countdown_seconds}">${fmtCountdown(d.countdown_seconds)}</div>` : ''}
       </div>
     </div>`;
@@ -616,14 +653,47 @@ function renderDropDetail() {
     ? `<button class="btn btn-outline btn-full" onclick="claimDrop('${d.id}','own')">OWN THIS • ${fmtMoney(d.own_price)}</button>`
     : '';
 
+  // First-N badge
+  const fanNum = d.user_fan_number;
+  const firstNBadge = fanNum && fanNum <= 100
+    ? `<div class="first-n-badge">🏅 First ${fanNum} ${fanNum === 1 ? 'Owner' : 'Owners'}</div>`
+    : '';
+
+  // Ownership ledger
+  const owners = d.first_owners || [];
+  const ownerLedger = d.owner_count > 0 ? `
+    <div class="ownership-ledger">
+      <div class="ledger-title">Ownership Ledger <span class="badge badge-gray">${d.owner_count} owner${d.owner_count !== 1 ? 's' : ''}</span></div>
+      <div class="ledger-list">
+        ${owners.map((o, i) => `
+          <div class="ledger-row">
+            <div class="ledger-num">#${o.fan_number || (i+1)}</div>
+            <div class="ledger-avatar">${(o.username || '?')[0].toUpperCase()}</div>
+            <div class="ledger-name">@${esc(o.username)}</div>
+            ${(o.fan_number || i+1) <= 10 ? `<span class="badge badge-red">FIRST ${o.fan_number || i+1}</span>` : ''}
+          </div>
+        `).join('')}
+        ${d.owner_count > 10 ? `<div class="ledger-more">+ ${d.owner_count - 10} more owners</div>` : ''}
+      </div>
+    </div>` : '';
+
+  // Scarcity type meta
+  const typeMeta = DROP_TYPE_META[d.drop_type] || {};
+
   return `
     <div class="page-body" style="padding-top:24px">
       <button class="back-btn" onclick="nav('feed')">← Back to Drops</button>
+      ${firstNBadge}
       <div class="drop-detail-layout">
         <div class="detail-cover-sticky">
           <div class="detail-cover-img">
             ${cv ? `<img src="${cv}" alt="">` : '🎵'}
           </div>
+          <div class="detail-type-bar" style="background:${typeMeta.color || '#333'}">
+            <span>${typeMeta.label || d.drop_type?.toUpperCase()}</span>
+            <span>${typeMeta.desc || ''}</span>
+          </div>
+          ${d.boost_active ? `<div class="boost-active-bar">🚀 BOOSTED DROP</div>` : ''}
           ${hasAccess && d.audio_path ? renderAudioPlayer(d.id) : ''}
           ${!hasAccess && d.audio_path ? `
             <div class="audio-player">
@@ -637,7 +707,7 @@ function renderDropDetail() {
         </div>
         <div>
           <div class="detail-title">${esc(d.title)}</div>
-          <div class="detail-artist" onclick="toast('Artist profiles coming soon')">@${esc(d.artist_name || 'unknown')} · ${esc(d.artist_city || '')}</div>
+          <div class="detail-artist">@${esc(d.artist_name || 'unknown')}${d.artist_city ? ` · 📍 ${esc(d.artist_city)}` : ''}</div>
 
           ${d.countdown_seconds > 0 ? `<div class="detail-countdown ${d.countdown_seconds < 3600 ? 'urgent' : ''}" data-cd="${d.countdown_seconds}">${fmtCountdown(d.countdown_seconds)}</div>` : ''}
 
@@ -645,6 +715,7 @@ function renderDropDetail() {
             <div class="detail-supply">
               <div class="detail-supply-hdr"><span>${claimed} of ${d.total_supply} claimed</span><span class="text-mono">${Math.round(sp)}%</span></div>
               <div class="detail-supply-track"><div class="detail-supply-fill" style="width:${sp}%"></div></div>
+              ${d.owner_count > 0 ? `<div class="text-sm text-gray" style="margin-top:4px">${d.owner_count} fan${d.owner_count !== 1 ? 's' : ''} own this drop</div>` : ''}
             </div>` : ''}
 
           <div class="action-btns">
@@ -661,17 +732,20 @@ function renderDropDetail() {
 
           ${d.description ? `<p class="text-gray text-sm" style="margin-bottom:20px;line-height:1.7">${esc(d.description)}</p>` : ''}
 
-          <div class="artist-card" onclick="toast('Artist profiles coming soon')">
+          <div class="artist-card">
             <div class="artist-avatar">${(d.artist_name || '?')[0].toUpperCase()}</div>
-            <div>
+            <div style="flex:1">
               <div style="font-weight:600">@${esc(d.artist_name || 'unknown')}</div>
               <div class="text-gray text-sm">${esc(d.artist_city || '')}</div>
             </div>
+            ${state.user?.role === 'fan' ? `<button class="btn btn-outline btn-sm" onclick="subscribeToArtist('${d.artist_id}')">Follow</button>` : ''}
           </div>
+
+          ${ownerLedger}
 
           <div class="divider"></div>
           <div class="flex gap-2">
-            <button class="btn btn-ghost btn-sm" onclick="logEngage('${d.id}','save');toast('Saved','success')">♡ Save</button>
+            <button class="btn btn-ghost btn-sm" onclick="logEngage('${d.id}','save');toast('Saved ♡','success')">♡ Save</button>
             <button class="btn btn-ghost btn-sm" onclick="logEngage('${d.id}','share');navigator.clipboard?.writeText(location.href);toast('Link copied','success')">↗ Share</button>
           </div>
         </div>
@@ -713,13 +787,27 @@ window.openDrop = async function(dropId) {
 
 window.claimDrop = async function(dropId, type) {
   try {
-    await API.json(`/drops/${dropId}/access`, { method: 'POST', body: JSON.stringify({ access_type: type }) });
-    toast('Access granted!', 'success');
+    const result = await API.json(`/drops/${dropId}/access`, { method: 'POST', body: JSON.stringify({ access_type: type }) });
+    const badge = result.badge ? ` 🏅 ${result.badge}` : '';
+    toast(`Access granted!${badge}`, 'success');
     const data = await API.json(`/drops/${dropId}`);
     state.viewData.drop = data.drop;
     render();
   } catch (e) {
-    toast(e.error || 'Failed to claim', 'error');
+    if (e.error === 'SOLD_OUT') toast('Sold out — you missed it', 'error');
+    else if (e.error === 'EXPIRED') toast('This drop has expired', 'error');
+    else toast(e.error || 'Failed to claim', 'error');
+  }
+};
+
+window.subscribeToArtist = async function(artistId) {
+  if (!state.token) { toast('Sign in to follow artists', 'error'); return; }
+  try {
+    const data = await API.json('/subscriptions', { method: 'POST', body: JSON.stringify({ artist_id: artistId, tier: 'basic' }) });
+    toast(`Following! ${data.subscription?.tier_label || ''}`, 'success');
+  } catch (e) {
+    if (e.error === 'Already subscribed') toast('Already following this artist');
+    else toast(e.error || 'Failed to subscribe', 'error');
   }
 };
 
@@ -782,17 +870,22 @@ async function loadCollection() {
   const el = document.getElementById('coll-grid');
   if (!el) return;
   try {
-    const data = await API.json(`/users/${state.user.id}/collection`);
-    const items = data.collection || [];
+    const data = await API.json('/drops/collection');
+    const items = data.drops || [];
     if (!items.length) { el.innerHTML = emptyState('📦', 'Empty collection', 'Claim some drops to build your collection'); return; }
     el.innerHTML = items.map(item => {
-      const cv = item.cover_image_path ? `/api/covers/${item.cover_image_path.split('/').pop()}` : null;
+      const cv = coverUrl(item);
       return `
-        <div class="collection-item" onclick="openDrop('${item.drop_id}')">
-          <div class="thumb">${cv ? `<img src="${cv}" alt="">` : '🎵'}</div>
+        <div class="collection-item ${item.access_type === 'own' ? 'owned' : ''}" onclick="openDrop('${item.id}')">
+          <div class="thumb">
+            ${cv ? `<img src="${cv}" alt="">` : '🎵'}
+            ${item.access_type === 'own' ? `<span class="own-badge">OWN</span>` : ''}
+            ${item.badge ? `<span class="first-n-mini">${item.badge}</span>` : ''}
+          </div>
           <div class="info">
             <div class="title">${esc(item.title)}</div>
-            <div class="artist">@${esc(item.artist_name)}</div>
+            <div class="artist">@${esc(item.artist_name || 'unknown')}</div>
+            <div class="text-sm text-gray">${item.access_type === 'own' ? '🏅 OWNED' : '🎧 ACCESS'}</div>
           </div>
         </div>`;
     }).join('');
@@ -923,8 +1016,8 @@ async function loadArtistDropsList() {
   const el = document.getElementById('a-all-drops');
   if (!el) return;
   try {
-    const data = await API.json(`/users/${state.user.id}/profile`);
-    const drops = data.profile?.drops || [];
+    const data = await API.json('/drops/my');
+    const drops = data.drops || [];
     el.innerHTML = drops.length
       ? drops.map(d => renderDropRow(d, true)).join('')
       : emptyState('🎤', 'No drops yet', 'Create your first drop', `<button class="btn btn-primary" onclick="nav('create-drop')">+ Create Drop</button>`);
@@ -946,10 +1039,11 @@ function renderCreateDrop() {
       <div class="form-group">
         <label class="form-label">Type</label>
         <select name="drop_type" onchange="toggleDropTypeFields(this.value)">
-          <option value="open">Open — Unlimited, always available</option>
-          <option value="timed">Timed — Available for a set window</option>
-          <option value="limited">Limited — Capped supply</option>
-          <option value="rare">Rare — Ultra limited edition</option>
+          <option value="open">Open — No limits, maximum reach</option>
+          <option value="timed">Timed — Expires after a set window (24–72h)</option>
+          <option value="limited">Limited — Capped supply (50–500 fans)</option>
+          <option value="tiered">Tiered — Early fans free, later fans pay</option>
+          <option value="rare">Rare — Permanent rare, always gated</option>
         </select>
       </div>
       <div id="supply-fields" class="form-row hidden">
@@ -958,7 +1052,8 @@ function renderCreateDrop() {
       </div>
       <div class="form-group"><label class="form-label">Stream Access Price ($)</label><input type="number" name="access_price" min="0" step="0.01" value="0" placeholder="0 = free to stream"></div>
 
-      <div class="form-section-title">SCHEDULE</div>
+      <div class="form-section-title">LOCATION & SCHEDULE</div>
+      <div class="form-group"><label class="form-label">City (for geo-trending)</label><input type="text" name="city" placeholder="${esc(state.user?.city || 'Houston, ATL, Detroit...')}" value="${esc(state.user?.city || '')}"></div>
       <div class="form-row">
         <div class="form-group"><label class="form-label">Starts At</label><input type="datetime-local" name="starts_at"></div>
         <div class="form-group" id="expires-field"><label class="form-label">Expires At</label><input type="datetime-local" name="expires_at"></div>
@@ -1701,6 +1796,195 @@ function startCountdowns() {
       if (s < 3600) el.classList.add('urgent');
     });
   }, 1000);
+}
+
+// ============================================================
+// ARTIST BOOST VIEWS
+// ============================================================
+function renderArtistBoosts() {
+  return pageWrap('BOOST', 'Amplify your drops — Prove It required', `
+    <div class="boost-explainer">
+      <div class="boost-explainer-icon">🚀</div>
+      <div>
+        <div style="font-weight:700;margin-bottom:4px">How Boosts Work</div>
+        <div class="text-gray text-sm">Boosts amplify drops that already have real organic traction. You must hit a minimum velocity score before boosting — you cannot buy your way to trending with zero engagement. The Prove It algorithm protects feed quality.</div>
+      </div>
+    </div>
+    <div class="boost-tiers" id="boost-tiers-grid">
+      <div class="loading"><div class="spinner"></div></div>
+    </div>
+    <div class="section-hdr" style="margin-top:28px"><div class="section-title">YOUR BOOSTS</div></div>
+    <div id="my-boosts"><div class="loading"><div class="spinner"></div></div></div>
+  `);
+}
+
+async function loadArtistBoosts() {
+  try {
+    const [tiersData, boostsData] = await Promise.all([
+      API.json('/boosts/tiers'),
+      API.json('/boosts/my'),
+    ]);
+
+    const tiersEl = document.getElementById('boost-tiers-grid');
+    const tiers = tiersData.tiers || {};
+    if (tiersEl) {
+      tiersEl.innerHTML = Object.entries(tiers).map(([key, t]) => `
+        <div class="boost-tier-card">
+          <div class="boost-tier-name">${t.label}</div>
+          <div class="boost-tier-price">$${t.price}</div>
+          <div class="text-gray text-sm">${t.duration_hours}h amplification</div>
+          <button class="btn btn-primary btn-full" style="margin-top:12px" onclick="showBoostModal('${key}','${t.label}',${t.price})">
+            BOOST FOR $${t.price}
+          </button>
+        </div>
+      `).join('');
+    }
+
+    const boostsEl = document.getElementById('my-boosts');
+    const boosts = boostsData.boosts || [];
+    if (boostsEl) {
+      boostsEl.innerHTML = boosts.length
+        ? `<div class="table-wrap"><table class="data-table">
+            <thead><tr><th>Drop</th><th>Tier</th><th>Budget</th><th>Status</th><th>City</th><th>Created</th></tr></thead>
+            <tbody>
+              ${boosts.map(b => `<tr>
+                <td><strong>${esc(b.drop_title)}</strong> <span class="badge badge-gray">${esc(b.drop_status)}</span></td>
+                <td>${esc(b.tier||'-')}</td>
+                <td class="mono green">$${b.budget}</td>
+                <td>${b.status === 'active' ? '<span class="badge badge-red">ACTIVE</span>' : `<span class="badge badge-gray">${b.status}</span>`}</td>
+                <td class="text-gray">${esc(b.target_city||'All cities')}</td>
+                <td class="text-sm text-gray">${b.created_at?.slice(0,10)||'-'}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table></div>`
+        : emptyState('🚀', 'No boosts yet', 'Boost a live drop to amplify its reach');
+    }
+  } catch (e) {}
+}
+
+window.showBoostModal = async function(tier, label, price) {
+  // Load the artist's live drops to pick from
+  try {
+    const data = await API.json('/drops/my?status=live');
+    const drops = data.drops || [];
+    if (!drops.length) { toast('No live drops to boost. Create and publish a drop first.', 'error'); return; }
+
+    const options = drops.map(d => `<option value="${d.id}">${esc(d.title)} (vel: ${d.velocity||0})</option>`).join('');
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal">
+        <div class="modal-title">Boost with ${label} — $${price}</div>
+        <div class="form-group">
+          <label class="form-label">Select Drop to Boost</label>
+          <select id="boost-drop-select">${options}</select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Target City (optional)</label>
+          <input type="text" id="boost-city" placeholder="Houston, ATL, Detroit..." value="${esc(state.user?.city||'')}">
+        </div>
+        <div class="text-gray text-sm" style="margin-bottom:16px">Note: Drop must have organic engagement (velocity ≥ 0.5) to be boosted.</div>
+        <div class="flex gap-2">
+          <button class="btn btn-primary" onclick="submitBoost('${tier}')">CONFIRM BOOST — $${price}</button>
+          <button class="btn btn-ghost" onclick="document.querySelector('.modal-overlay').remove()">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+  } catch (e) { toast('Failed to load drops', 'error'); }
+};
+
+window.submitBoost = async function(tier) {
+  const dropId = document.getElementById('boost-drop-select')?.value;
+  const city = document.getElementById('boost-city')?.value;
+  if (!dropId) { toast('Select a drop', 'error'); return; }
+  try {
+    await API.json('/boosts', { method: 'POST', body: JSON.stringify({ drop_id: dropId, tier, target_city: city }) });
+    toast('Boost activated! 🚀', 'success');
+    document.querySelector('.modal-overlay')?.remove();
+    loadArtistBoosts();
+  } catch (e) {
+    if (e.error === 'TRACTION_REQUIRED') toast(e.message || 'Need more organic engagement first', 'error');
+    else toast(e.error || 'Failed to boost', 'error');
+  }
+};
+
+// ============================================================
+// FAN SUBSCRIPTIONS VIEW
+// ============================================================
+function renderFanSubscriptions() {
+  return pageWrap('FOLLOWING', 'Artists you support', `
+    <div id="subs-list"><div class="loading"><div class="spinner"></div></div></div>
+  `);
+}
+
+async function loadFanSubscriptions() {
+  const el = document.getElementById('subs-list');
+  if (!el) return;
+  try {
+    const data = await API.json('/subscriptions');
+    const subs = data.subscriptions || [];
+    if (!subs.length) {
+      el.innerHTML = emptyState('⭐', 'Not following anyone yet', 'Follow artists from their drop pages to get early access');
+      return;
+    }
+    el.innerHTML = `
+      <div class="roster-grid">
+        ${subs.map(s => `
+          <div class="roster-card">
+            <div class="roster-avatar">${(s.artist_username||'?')[0].toUpperCase()}</div>
+            <div class="roster-info">
+              <div class="roster-name">@${esc(s.artist_username)}</div>
+              <div class="roster-city">${esc(s.artist_city||'')}</div>
+              <div style="margin-top:4px"><span class="badge badge-red">${esc(s.tier?.toUpperCase()||'BASIC')}</span></div>
+            </div>
+            <div class="roster-actions">
+              <div class="text-sm text-gray">$${s.price_monthly}/mo</div>
+              <button class="btn btn-sm btn-danger" onclick="cancelSub('${s.artist_id}','${esc(s.artist_username)}')">Unfollow</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="text-gray text-sm" style="margin-top:16px">${subs.length} artist${subs.length !== 1 ? 's' : ''} followed · ${data.tiers ? Object.entries(data.tiers).map(([k,t]) => `${t.label}: $${t.price}/mo`).join(' | ') : ''}</div>
+    `;
+  } catch (e) { el.innerHTML = emptyState('⚠️', 'Failed to load', ''); }
+}
+
+window.cancelSub = async function(artistId, username) {
+  if (!confirm(`Unfollow @${username}?`)) return;
+  try {
+    await API.json(`/subscriptions/${artistId}/cancel`, { method: 'POST' });
+    toast('Unfollowed', 'success');
+    loadFanSubscriptions();
+  } catch (e) { toast(e.error || 'Failed', 'error'); }
+};
+
+// ============================================================
+// CITY TRENDING VIEW
+// ============================================================
+function renderCityTrending() {
+  const city = state.viewData.city || state.user?.city || '';
+  return pageWrap(`📍 ${city.toUpperCase() || 'CITY DROPS'}`, 'Local scene leaderboard', `
+    <div class="flex gap-2" style="margin-bottom:20px">
+      <input type="text" id="city-input" value="${esc(city)}" placeholder="Enter city..." style="flex:1">
+      <button class="btn btn-primary" onclick="loadCityTrending()">Go</button>
+    </div>
+    <div id="city-drops"><div class="loading"><div class="spinner"></div></div></div>
+  `);
+}
+
+async function loadCityTrending() {
+  const cityInput = document.getElementById('city-input');
+  const city = cityInput?.value?.trim() || state.viewData.city || state.user?.city || '';
+  const el = document.getElementById('city-drops');
+  if (!el || !city) return;
+  el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  try {
+    const data = await API.json(`/drops/trending/city/${encodeURIComponent(city)}`);
+    const drops = data.drops || [];
+    el.innerHTML = drops.length
+      ? `<div class="drops-grid">${drops.map(renderDropCard).join('')}</div>`
+      : emptyState('📍', `Nothing trending in ${esc(city)} yet`, 'Be the first to drop here');
+  } catch (e) { el.innerHTML = emptyState('⚠️', 'Failed to load', ''); }
 }
 
 // ============================================================
