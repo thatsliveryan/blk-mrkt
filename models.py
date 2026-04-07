@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT UNIQUE NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
-    role TEXT NOT NULL CHECK(role IN ('artist', 'fan', 'curator', 'admin')),
+    role TEXT NOT NULL CHECK(role IN ('artist', 'fan', 'curator', 'label', 'admin')),
     city TEXT,
     bio TEXT DEFAULT '',
     avatar_url TEXT DEFAULT '',
@@ -76,6 +76,26 @@ CREATE TABLE IF NOT EXISTS drop_scenes (
     drop_id TEXT NOT NULL REFERENCES drops(id),
     scene_id TEXT NOT NULL REFERENCES scenes(id),
     PRIMARY KEY (drop_id, scene_id)
+);
+
+CREATE TABLE IF NOT EXISTS labels (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    owner_id TEXT NOT NULL REFERENCES users(id),
+    bio TEXT DEFAULT '',
+    city TEXT,
+    logo_url TEXT DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS label_artists (
+    label_id TEXT NOT NULL REFERENCES labels(id),
+    artist_id TEXT NOT NULL REFERENCES users(id),
+    invited_by TEXT REFERENCES users(id),
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'pending', 'removed')),
+    joined_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    PRIMARY KEY (label_id, artist_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_drops_status ON drops(status);

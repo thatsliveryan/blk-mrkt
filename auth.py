@@ -75,8 +75,8 @@ def register(req):
 
     if not username or not email or len(password) < 6:
         return jsonify({"error": "Username, email, and password (6+ chars) required"}, 400), 400
-    if role not in ("artist", "fan"):
-        return jsonify({"error": "Role must be 'artist' or 'fan'"}, 400), 400
+    if role not in ("artist", "fan", "label"):
+        return jsonify({"error": "Role must be 'artist', 'fan', or 'label'"}, 400), 400
 
     pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     user_id = new_id()
