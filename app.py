@@ -14,6 +14,7 @@ from config import DATA_DIR, AUDIO_DIR, COVERS_DIR, PORT, DEBUG, MAX_UPLOAD_SIZE
 from models import init_db, get_db
 from server import App, Blueprint, Request, Response, jsonify, g, parse_multipart
 import server as srv
+from engine import rate_limiter, RATE_LIMITS
 
 # Create app
 app = App(static_folder=os.path.join(os.path.dirname(__file__), 'static'))
@@ -27,6 +28,10 @@ from admin import admin_bp
 from labels import labels_bp
 from boosts import boosts_bp
 from subscriptions import subs_bp
+from payments import payments_bp
+from follows import follows_bp
+from badges import badges_bp
+from analytics import analytics_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(drops_bp)
@@ -36,6 +41,10 @@ app.register_blueprint(admin_bp)
 app.register_blueprint(labels_bp)
 app.register_blueprint(boosts_bp)
 app.register_blueprint(subs_bp)
+app.register_blueprint(payments_bp)
+app.register_blueprint(follows_bp)
+app.register_blueprint(badges_bp)
+app.register_blueprint(analytics_bp)
 
 
 # ---------------------------------------------------------------------------
@@ -120,12 +129,59 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _rate_limit_check(self, req):
+        """
+        Apply sliding-window rate limiting based on the route.
+        Returns a Response if rate-limited, None if allowed.
+        """
+        path = req.path
+        client_ip = req.headers.get('x-forwarded-for', '').split(',')[0].strip() or \
+                    self.client_address[0]
+
+        # Determine which rate limit bucket applies
+        if path.startswith('/api/auth/login') or path.startswith('/api/auth/register'):
+            limit, window = RATE_LIMITS["auth"]
+            key = f"ip:{client_ip}:auth"
+        elif path.endswith('/access') and req.method == 'POST':
+            limit, window = RATE_LIMITS["claim"]
+            from server import g as _g
+            uid = getattr(_g, 'user_id', None) or client_ip
+            key = f"user:{uid}:claim"
+        elif path.endswith('/engage') and req.method == 'POST':
+            limit, window = RATE_LIMITS["engage"]
+            from server import g as _g
+            uid = getattr(_g, 'user_id', None) or client_ip
+            key = f"user:{uid}:engage"
+        elif path.startswith('/api/boosts') and req.method == 'POST':
+            limit, window = RATE_LIMITS["boost"]
+            from server import g as _g
+            uid = getattr(_g, 'user_id', None) or client_ip
+            key = f"user:{uid}:boost"
+        else:
+            return None  # No rate limit for other routes
+
+        allowed, retry_after = rate_limiter.check(key, limit, window)
+        if not allowed:
+            resp = jsonify(
+                {"error": f"Rate limited. Try again in {retry_after} seconds.", "retry_after": retry_after},
+                status=429
+            )
+            resp.headers["Retry-After"] = str(retry_after)
+            return resp
+        return None
+
     def _handle(self):
         req = self._build_request()
 
         # OPTIONS (CORS preflight)
         if req.method == 'OPTIONS':
             self._send_response(Response('', 204))
+            return
+
+        # Rate limiting
+        rate_resp = self._rate_limit_check(req)
+        if rate_resp:
+            self._send_response(rate_resp)
             return
 
         # Try API routes

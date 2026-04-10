@@ -12,6 +12,7 @@ from engine import (
     transition_drop_states, get_drop_status_info,
     calc_velocity, calc_velocity_bulk, get_engagement_stats,
 )
+from boosts import boost_multiplier_for_drop
 from config import AUDIO_DIR, COVERS_DIR, ALLOWED_AUDIO_EXTENSIONS, ALLOWED_IMAGE_EXTENSIONS
 
 drops_bp = Blueprint("drops", prefix="/api/drops")
@@ -134,7 +135,10 @@ def list_drops(req):
     ids_starts = [(d["id"], d["starts_at"]) for d in drops]
     velocities = calc_velocity_bulk(ids_starts)
     for d in drops:
-        d["velocity"] = velocities.get(d["id"], 0)
+        base_velocity = velocities.get(d["id"], 0)
+        multiplier = boost_multiplier_for_drop(d["id"]) if d.get("boost_active") else 1.0
+        d["velocity"] = round(base_velocity * multiplier, 2)
+        d["boost_multiplier"] = multiplier
         get_drop_status_info(d)
     drops.sort(key=lambda d: d["velocity"], reverse=True)
 
@@ -160,7 +164,10 @@ def trending(req):
     ids_starts = [(d["id"], d["starts_at"]) for d in drops]
     velocities = calc_velocity_bulk(ids_starts)
     for d in drops:
-        d["velocity"] = velocities.get(d["id"], 0)
+        base_velocity = velocities.get(d["id"], 0)
+        multiplier = boost_multiplier_for_drop(d["id"]) if d.get("boost_active") else 1.0
+        d["velocity"] = round(base_velocity * multiplier, 2)
+        d["boost_multiplier"] = multiplier
         get_drop_status_info(d)
     drops.sort(key=lambda d: d["velocity"], reverse=True)
     return jsonify({"drops": drops})
@@ -292,6 +299,13 @@ def claim_access(req, drop_id):
     finally:
         conn.close()
 
+    # Award badges for free/direct claims
+    try:
+        from badges import check_and_award_badges
+        awarded = check_and_award_badges(srv.g.user_id, drop_id)
+    except Exception:
+        awarded = []
+
     return jsonify({
         "message": "Access granted",
         "access_type": access_type,
@@ -299,6 +313,7 @@ def claim_access(req, drop_id):
         "drop_id": drop_id,
         "fan_number": fan_number,
         "badge": f"First {fan_number}" if fan_number <= 100 else None,
+        "badges_awarded": awarded,
     }, 201), 201
 
 

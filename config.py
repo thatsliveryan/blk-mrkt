@@ -22,3 +22,11 @@ ALLOWED_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 
 PORT = int(os.environ.get("PORT", 8080))
 DEBUG = os.environ.get("FLASK_DEBUG", "0") == "1"
+
+# Stripe
+STRIPE_SECRET_KEY      = os.environ.get("STRIPE_SECRET_KEY", "")
+STRIPE_WEBHOOK_SECRET  = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+STRIPE_PUBLISHABLE_KEY = os.environ.get("STRIPE_PUBLISHABLE_KEY", "")
+
+# Public base URL (used to build Stripe redirect URLs)
+PUBLIC_URL = os.environ.get("PUBLIC_URL", "https://blk-mrkt-production.up.railway.app")

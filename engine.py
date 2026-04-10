@@ -1,10 +1,72 @@
 """
 BLK MRKT — Core Engine
-Drop lifecycle manager + engagement velocity scoring.
+Drop lifecycle manager + engagement velocity scoring + rate limiting.
 """
 
+import time as _time_module
 from datetime import datetime, timezone
 from models import get_db, rows_to_list, row_to_dict
+
+
+# ---------------------------------------------------------------------------
+# Rate Limiter (in-memory, single-threaded safe)
+# ---------------------------------------------------------------------------
+
+class RateLimiter:
+    """
+    Simple sliding-window rate limiter.
+    Stores timestamps per key (IP or user_id).
+    Keys: "ip:{ip}" | "user:{uid}:{endpoint_group}"
+    """
+    def __init__(self):
+        self._store = {}   # key → list of float timestamps
+        self._last_cleanup = _time_module.time()
+
+    def _cleanup(self):
+        """Prune old entries every 60 seconds to bound memory use."""
+        now = _time_module.time()
+        if now - self._last_cleanup < 60:
+            return
+        self._last_cleanup = now
+        cutoff = now - 300  # keep last 5 minutes max
+        self._store = {
+            k: [t for t in ts if t > cutoff]
+            for k, ts in self._store.items()
+            if any(t > cutoff for t in ts)
+        }
+
+    def check(self, key, limit, window_seconds=60):
+        """
+        Returns (allowed: bool, retry_after: int).
+        allowed=True  → request is within rate limit.
+        allowed=False → rate limited; retry_after=seconds to wait.
+        """
+        self._cleanup()
+        now = _time_module.time()
+        cutoff = now - window_seconds
+        timestamps = [t for t in self._store.get(key, []) if t > cutoff]
+
+        if len(timestamps) >= limit:
+            oldest = min(timestamps)
+            retry_after = int(window_seconds - (now - oldest)) + 1
+            return False, retry_after
+
+        timestamps.append(now)
+        self._store[key] = timestamps
+        return True, 0
+
+
+# Singleton — imported by app.py
+rate_limiter = RateLimiter()
+
+# Rate limit profiles
+RATE_LIMITS = {
+    "auth":    (5,  60),   # 5 requests / 60s per IP
+    "claim":   (10, 60),   # 10 requests / 60s per user
+    "engage":  (30, 60),   # 30 requests / 60s per user
+    "boost":   (5,  60),   # 5 requests / 60s per user
+    "api":     (120, 60),  # 120 requests / 60s per IP (general)
+}
 
 # ---------------------------------------------------------------------------
 # Velocity cache — simple in-memory TTL cache

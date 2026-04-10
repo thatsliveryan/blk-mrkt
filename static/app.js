@@ -163,7 +163,8 @@ function navItems() {
   ];
   if (role === 'fan') all.push(
     { v: 'collection',       icon: '📦', label: 'Collection' },
-    { v: 'fan-subscriptions',icon: '⭐', label: 'Following' },
+    { v: 'fan-following',    icon: '🔔', label: 'Following' },
+    { v: 'fan-badges',       icon: '🏅', label: 'Badges' },
     { v: 'fan-profile',      icon: '👤', label: 'Profile' },
   );
   if (role === 'artist') all.push(
@@ -172,6 +173,7 @@ function navItems() {
     { v: 'create-drop',      icon: '＋', label: 'Drop' },
     { v: 'artist-boosts',    icon: '🚀', label: 'Boost' },
     { v: 'artist-revenue',   icon: '💰', label: 'Revenue' },
+    { v: 'artist-analytics', icon: '📈', label: 'Analytics' },
     { v: 'artist-profile',   icon: '👤', label: 'Profile' },
   );
   if (role === 'label') all.push(
@@ -321,9 +323,12 @@ function getViewContent() {
     case 'city-trending':     return renderCityTrending();
     // Fan
     case 'collection':        return renderCollection();
+    case 'fan-following':     return renderFanFollowing();
+    case 'fan-badges':        return renderFanBadges();
     case 'fan-subscriptions': return renderFanSubscriptions();
     case 'fan-profile':       return renderFanProfile();
     // Artist
+    case 'artist-analytics':  return renderArtistAnalytics();
     case 'artist-dashboard':  return renderArtistDashboard();
     case 'artist-drops':      return renderArtistDrops();
     case 'create-drop':       return renderCreateDrop();
@@ -352,12 +357,15 @@ function afterRender() {
   switch (state.view) {
     case 'feed':              loadFeed(); break;
     case 'collection':        loadCollection(); break;
+    case 'fan-following':     loadFanFollowing(); break;
+    case 'fan-badges':        loadFanBadges(); break;
     case 'fan-subscriptions': loadFanSubscriptions(); break;
     case 'fan-profile':       loadFanProfile(); break;
     case 'city-trending':     loadCityTrending(); break;
     case 'artist-dashboard':  loadArtistDashboard(); break;
     case 'artist-drops':      loadArtistDropsList(); break;
     case 'artist-boosts':     loadArtistBoosts(); break;
+    case 'artist-analytics':  loadArtistAnalytics(); break;
     case 'artist-revenue':    loadArtistRevenue(); break;
     case 'label-roster':      loadLabelRoster(); break;
     case 'label-drops':       loadLabelDropsList(); break;
@@ -512,11 +520,13 @@ window.handleAuth = async function(e) {
 // ============================================================
 function renderFeed() {
   const city = state.user?.city || '';
+  const showFollowing = !!state.token;
   return pageWrap('DROPS', 'The underground has an address now.', `
     <div class="tab-bar">
       <div class="tab ${state.feedTab==='live'?'active':''}" onclick="switchFeedTab('live')">LIVE NOW</div>
       <div class="tab ${state.feedTab==='trending'?'active':''}" onclick="switchFeedTab('trending')">TRENDING</div>
       ${city ? `<div class="tab ${state.feedTab==='city'?'active':''}" onclick="switchFeedTab('city')">📍 ${esc(city).toUpperCase()}</div>` : ''}
+      ${showFollowing ? `<div class="tab ${state.feedTab==='following'?'active':''}" onclick="switchFeedTab('following')">🔔 FOLLOWING</div>` : ''}
       <div class="tab ${state.feedTab==='scenes'?'active':''}" onclick="switchFeedTab('scenes')">SCENES</div>
     </div>
     <div id="feed-content"><div class="loading"><div class="spinner"></div></div></div>
@@ -553,6 +563,17 @@ async function loadFeed() {
       el.innerHTML = drops.length
         ? `<div class="city-trending-header">Trending in <strong>${esc(city)}</strong></div><div class="drops-grid">${drops.map(renderDropCard).join('')}</div>`
         : emptyState('📍', `No drops in ${esc(city)} yet`, 'Be the first artist to drop here');
+    } else if (state.feedTab === 'following') {
+      const d = await API.json('/feed/following?status=live&limit=50');
+      drops = d.drops || [];
+      if (d.message && !drops.length) {
+        el.innerHTML = emptyState('🔔', 'No one followed yet', d.message,
+          `<button class="btn btn-primary" onclick="switchFeedTab('live')">Browse All Drops</button>`);
+      } else {
+        el.innerHTML = drops.length
+          ? `<div class="drops-grid">${drops.map(renderDropCard).join('')}</div>`
+          : emptyState('🔔', 'No drops from followed artists', 'Follow more artists to see their drops here');
+      }
     } else {
       const d = await API.json('/scenes');
       scenes = d.scenes || [];
@@ -786,16 +807,44 @@ window.openDrop = async function(dropId) {
 };
 
 window.claimDrop = async function(dropId, type) {
+  const drop = state.viewData.drop;
+  const price = type === 'own' ? (drop?.own_price || drop?.access_price || 0) : (drop?.access_price || 0);
+
+  // Paid drop → Stripe checkout
+  if (price > 0) {
+    try {
+      const result = await API.json('/payments/checkout', {
+        method: 'POST',
+        body: JSON.stringify({ drop_id: dropId, access_type: type }),
+      });
+      if (result.checkout_url) {
+        toast('Redirecting to secure checkout...', 'info');
+        window.location.href = result.checkout_url;
+        return;
+      }
+    } catch (e) {
+      if (e.error === 'SOLD_OUT') toast('Sold out — you missed it', 'error');
+      else if (e.error === 'Already have access') toast('You already have access', 'info');
+      else toast(e.error || 'Checkout failed', 'error');
+      return;
+    }
+  }
+
+  // Free drop → direct claim
   try {
     const result = await API.json(`/drops/${dropId}/access`, { method: 'POST', body: JSON.stringify({ access_type: type }) });
     const badge = result.badge ? ` 🏅 ${result.badge}` : '';
-    toast(`Access granted!${badge}`, 'success');
+    const extraBadges = (result.badges_awarded || []).length > 0
+      ? ` ✨ ${result.badges_awarded.length} badge${result.badges_awarded.length > 1 ? 's' : ''} earned!`
+      : '';
+    toast(`Access granted!${badge}${extraBadges}`, 'success');
     const data = await API.json(`/drops/${dropId}`);
     state.viewData.drop = data.drop;
     render();
   } catch (e) {
     if (e.error === 'SOLD_OUT') toast('Sold out — you missed it', 'error');
     else if (e.error === 'EXPIRED') toast('This drop has expired', 'error');
+    else if (e.error === 'Already have access') toast('You already have access to this drop', 'info');
     else toast(e.error || 'Failed to claim', 'error');
   }
 };
@@ -803,11 +852,14 @@ window.claimDrop = async function(dropId, type) {
 window.subscribeToArtist = async function(artistId) {
   if (!state.token) { toast('Sign in to follow artists', 'error'); return; }
   try {
-    const data = await API.json('/subscriptions', { method: 'POST', body: JSON.stringify({ artist_id: artistId, tier: 'basic' }) });
-    toast(`Following! ${data.subscription?.tier_label || ''}`, 'success');
+    const data = await API.json(`/follow/${artistId}`, { method: 'POST' });
+    if (data.following) {
+      toast(`Following! 🔔 (${data.follower_count} followers)`, 'success');
+    } else {
+      toast('Unfollowed', 'info');
+    }
   } catch (e) {
-    if (e.error === 'Already subscribed') toast('Already following this artist');
-    else toast(e.error || 'Failed to subscribe', 'error');
+    toast(e.error || 'Failed to follow', 'error');
   }
 };
 
@@ -1898,10 +1950,16 @@ window.submitBoost = async function(tier) {
   const city = document.getElementById('boost-city')?.value;
   if (!dropId) { toast('Select a drop', 'error'); return; }
   try {
-    await API.json('/boosts', { method: 'POST', body: JSON.stringify({ drop_id: dropId, tier, target_city: city }) });
-    toast('Boost activated! 🚀', 'success');
+    const result = await API.json('/boosts', { method: 'POST', body: JSON.stringify({ drop_id: dropId, tier, target_city: city }) });
     document.querySelector('.modal-overlay')?.remove();
-    loadArtistBoosts();
+    if (result.checkout_url) {
+      toast('Redirecting to payment...', 'info');
+      window.location.href = result.checkout_url;
+    } else {
+      // Dev mode — activated immediately
+      toast(result.message || 'Boost activated! 🚀', 'success');
+      loadArtistBoosts();
+    }
   } catch (e) {
     if (e.error === 'TRACTION_REQUIRED') toast(e.message || 'Need more organic engagement first', 'error');
     else toast(e.error || 'Failed to boost', 'error');
@@ -1986,6 +2044,229 @@ async function loadCityTrending() {
       : emptyState('📍', `Nothing trending in ${esc(city)} yet`, 'Be the first to drop here');
   } catch (e) { el.innerHTML = emptyState('⚠️', 'Failed to load', ''); }
 }
+
+// ============================================================
+// FAN FOLLOWING FEED
+// ============================================================
+function renderFanFollowing() {
+  return pageWrap('FOLLOWING', 'Drops from artists you follow', `
+    <div class="tab-bar">
+      <div class="tab active">LATEST DROPS</div>
+    </div>
+    <div id="following-feed"><div class="loading"><div class="spinner"></div></div></div>
+    <div class="section-hdr" style="margin-top:28px"><div class="section-title">WHO YOU FOLLOW</div></div>
+    <div id="following-list"><div class="loading"><div class="spinner"></div></div></div>
+  `);
+}
+
+async function loadFanFollowing() {
+  // Load following feed
+  const feedEl = document.getElementById('following-feed');
+  const listEl = document.getElementById('following-list');
+  try {
+    const [feedData, followData] = await Promise.all([
+      API.json('/feed/following?status=live&limit=20'),
+      API.json('/following?limit=30'),
+    ]);
+    const drops = feedData.drops || [];
+    if (feedEl) {
+      feedEl.innerHTML = drops.length
+        ? `<div class="drops-grid">${drops.map(renderDropCard).join('')}</div>`
+        : emptyState('🔔', feedData.message || 'No live drops from followed artists',
+            'Explore the main feed to find artists', `<button class="btn btn-primary" onclick="switchFeedTab('live');nav('feed')">Browse Drops</button>`);
+    }
+    const following = followData.following || [];
+    if (listEl) {
+      listEl.innerHTML = following.length
+        ? `<div class="roster-grid">${following.map(u => `
+            <div class="roster-card" style="cursor:default">
+              <div class="top">
+                <div class="artist-avatar">${(u.username||'?')[0].toUpperCase()}</div>
+                <div>
+                  <div class="name">@${esc(u.username)}</div>
+                  <div class="text-gray text-sm">${esc(u.city||'')}</div>
+                </div>
+              </div>
+              <div class="flex gap-2" style="margin-top:12px">
+                <button class="btn btn-sm btn-danger" onclick="unfollowUser('${u.id}','${esc(u.username)}')">Unfollow</button>
+              </div>
+            </div>`).join('')}</div>`
+        : emptyState('👤', 'Not following anyone yet', 'Follow artists from their drop pages');
+    }
+  } catch (e) {
+    if (feedEl) feedEl.innerHTML = emptyState('⚠️', 'Failed to load', '');
+  }
+}
+
+window.unfollowUser = async function(userId, username) {
+  if (!confirm(`Unfollow @${username}?`)) return;
+  try {
+    await API.json(`/follow/${userId}`, { method: 'POST' }); // toggle = unfollow
+    toast(`Unfollowed @${username}`, 'info');
+    loadFanFollowing();
+  } catch (e) { toast(e.error || 'Failed', 'error'); }
+};
+
+// ============================================================
+// FAN BADGES VIEW
+// ============================================================
+function renderFanBadges() {
+  return pageWrap('BADGES', 'Your earned achievements', `
+    <div id="badges-grid"><div class="loading"><div class="spinner"></div></div></div>
+  `);
+}
+
+async function loadFanBadges() {
+  const el = document.getElementById('badges-grid');
+  if (!el) return;
+  try {
+    const data = await API.json('/badges');
+    const badges = data.badges || [];
+    if (!badges.length) {
+      el.innerHTML = emptyState('🏅', 'No badges yet', 'Claim drops early to earn your first badges');
+      return;
+    }
+    el.innerHTML = `
+      <div class="badge-grid">
+        ${badges.map(b => `
+          <div class="badge-card" style="border-color:${b.color||'#333'}">
+            <div class="badge-emoji">${b.emoji || '🏅'}</div>
+            <div class="badge-label">${esc(b.label)}</div>
+            <div class="badge-desc">${esc(b.description)}</div>
+            <div class="badge-date text-gray text-sm">${b.earned_at?.slice(0,10)||''}</div>
+          </div>`).join('')}
+      </div>
+      <div class="text-gray text-sm" style="margin-top:16px;text-align:center">${badges.length} badge${badges.length !== 1 ? 's' : ''} earned</div>`;
+  } catch (e) { el.innerHTML = emptyState('⚠️', 'Failed to load badges', ''); }
+}
+
+// ============================================================
+// ARTIST ANALYTICS VIEW
+// ============================================================
+function renderArtistAnalytics() {
+  return pageWrap('ANALYTICS', 'Drop performance deep dive', `
+    <div id="analytics-overview"><div class="loading"><div class="spinner"></div></div></div>
+    <div class="section-hdr" style="margin-top:28px">
+      <div class="section-title">SELECT A DROP</div>
+    </div>
+    <div id="analytics-drop-picker"></div>
+    <div id="analytics-drop-detail" style="margin-top:20px"></div>
+  `);
+}
+
+async function loadArtistAnalytics() {
+  try {
+    const [overviewData, dropsData] = await Promise.all([
+      API.json('/analytics/overview'),
+      API.json('/drops/my'),
+    ]);
+
+    const ov = overviewData.summary || {};
+    const el = document.getElementById('analytics-overview');
+    if (el) el.innerHTML = `
+      <div class="stats-grid">
+        <div class="stat-card"><div class="stat-label">FOLLOWERS</div><div class="stat-value">${fmt(ov.follower_count)}</div></div>
+        <div class="stat-card"><div class="stat-label">TOTAL PLAYS</div><div class="stat-value">${fmt(ov.engagement?.plays)}</div></div>
+        <div class="stat-card"><div class="stat-label">TOTAL CLAIMS</div><div class="stat-value">${fmt(ov.total_claims)}</div></div>
+        <div class="stat-card"><div class="stat-label">REVENUE</div><div class="stat-value green">${fmtMoney(ov.revenue?.total)}</div></div>
+      </div>
+      ${overviewData.top_drops?.length ? `
+        <div class="section-hdr" style="margin-top:20px"><div class="section-title">TOP DROPS BY VELOCITY</div></div>
+        <div class="table-wrap"><table class="data-table">
+          <thead><tr><th>Drop</th><th>Status</th><th>🔥 Velocity</th><th>Claims</th><th>Revenue</th></tr></thead>
+          <tbody>
+            ${overviewData.top_drops.map(d => `<tr>
+              <td><strong>${esc(d.title)}</strong></td>
+              <td>${statusBadge(d.status)}</td>
+              <td class="mono text-red">${d.velocity}</td>
+              <td class="mono">${fmt(d.claims)}</td>
+              <td class="mono text-green">${fmtMoney(d.revenue)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table></div>` : ''}`;
+
+    const drops = dropsData.drops || [];
+    const pickerEl = document.getElementById('analytics-drop-picker');
+    if (pickerEl && drops.length) {
+      pickerEl.innerHTML = `
+        <select class="btn btn-secondary" style="width:100%;text-align:left;padding:10px" onchange="loadDropAnalytics(this.value)">
+          <option value="">-- Pick a drop to see full analytics --</option>
+          ${drops.map(d => `<option value="${d.id}">${esc(d.title)} (${d.status})</option>`).join('')}
+        </select>`;
+    }
+  } catch (e) {}
+}
+
+window.loadDropAnalytics = async function(dropId) {
+  if (!dropId) return;
+  const el = document.getElementById('analytics-drop-detail');
+  if (!el) return;
+  el.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+  try {
+    const data = await API.json(`/analytics/drops/${dropId}`);
+    const eng = data.engagement || {};
+    const rev = data.revenue || {};
+    const funnel = data.funnel || [];
+
+    el.innerHTML = `
+      <div class="card card-pad" style="margin-bottom:20px">
+        <div class="section-title" style="margin-bottom:16px">${esc(data.drop_title)} — Full Analytics</div>
+        <div class="stats-grid">
+          <div class="stat-card"><div class="stat-label">PLAYS</div><div class="stat-value">${fmt(eng.plays)}</div></div>
+          <div class="stat-card"><div class="stat-label">SAVES</div><div class="stat-value">${fmt(eng.saves)}</div></div>
+          <div class="stat-card"><div class="stat-label">SHARES</div><div class="stat-value">${fmt(eng.shares)}</div></div>
+          <div class="stat-card"><div class="stat-label">CLAIMS</div><div class="stat-value">${fmt(eng.claims)}</div></div>
+          <div class="stat-card"><div class="stat-label">VELOCITY</div><div class="stat-value text-red">${data.current_velocity}</div></div>
+          <div class="stat-card"><div class="stat-label">REVENUE</div><div class="stat-value green">${fmtMoney(rev.total)}</div></div>
+        </div>
+
+        <div class="section-title" style="margin-top:20px;margin-bottom:12px">CONVERSION FUNNEL</div>
+        <div class="funnel-bars">
+          ${funnel.map(f => `
+            <div class="funnel-row">
+              <div class="funnel-label">${f.stage}</div>
+              <div class="funnel-bar-wrap">
+                <div class="funnel-bar" style="width:${f.pct}%;background:var(--red)"></div>
+              </div>
+              <div class="funnel-num">${fmt(f.count)} <span class="text-gray">(${f.pct}%)</span></div>
+            </div>`).join('')}
+        </div>
+
+        ${data.recent_claimers?.length ? `
+          <div class="section-title" style="margin-top:20px;margin-bottom:12px">RECENT CLAIMERS</div>
+          <div class="roster-grid">
+            ${data.recent_claimers.map(c => `
+              <div class="roster-card" style="padding:12px">
+                <div class="artist-avatar" style="width:32px;height:32px;font-size:14px">${(c.username||'?')[0].toUpperCase()}</div>
+                <div><div class="text-sm">@${esc(c.username)}</div>${c.fan_number ? `<div class="text-gray text-sm">Fan #${c.fan_number}</div>` : ''}</div>
+              </div>`).join('')}
+          </div>` : ''}
+      </div>`;
+  } catch (e) { el.innerHTML = emptyState('⚠️', 'Failed to load analytics', e.error || ''); }
+};
+
+// ============================================================
+// PAYMENT SUCCESS HANDLER
+// ============================================================
+(function handlePaymentReturn() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('payment') === 'success') {
+    const dropId = params.get('drop');
+    const boostId = params.get('boost');
+    window.history.replaceState({}, '', window.location.pathname);
+    if (dropId) {
+      setTimeout(() => {
+        toast('Payment successful! Access granted 🎉', 'success');
+        openDrop(dropId);
+      }, 500);
+    } else if (boostId) {
+      setTimeout(() => toast('Boost activated! 🚀 Your drop is now amplified.', 'success'), 500);
+    }
+  } else if (params.get('payment') === 'cancelled') {
+    window.history.replaceState({}, '', window.location.pathname);
+    setTimeout(() => toast('Payment cancelled.', 'info'), 500);
+  }
+})();
 
 // ============================================================
 // EXPOSE GLOBALS

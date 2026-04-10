@@ -78,15 +78,50 @@ CREATE TABLE IF NOT EXISTS drop_scenes (
     PRIMARY KEY (drop_id, scene_id)
 );
 
+CREATE TABLE IF NOT EXISTS transactions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    drop_id TEXT REFERENCES drops(id),
+    amount_cents INTEGER NOT NULL,
+    stripe_session_id TEXT,
+    stripe_payment_intent TEXT,
+    type TEXT NOT NULL CHECK(type IN ('drop_purchase', 'ownership_purchase', 'boost', 'subscription')),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'completed', 'failed', 'refunded')),
+    metadata TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS follows (
+    follower_id TEXT NOT NULL REFERENCES users(id),
+    following_id TEXT NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    PRIMARY KEY (follower_id, following_id)
+);
+
+CREATE TABLE IF NOT EXISTS badges (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    badge_type TEXT NOT NULL,
+    badge_data TEXT DEFAULT '{}',
+    earned_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    UNIQUE(user_id, badge_type, badge_data)
+);
+
 CREATE TABLE IF NOT EXISTS boosts (
     id TEXT PRIMARY KEY,
     drop_id TEXT NOT NULL REFERENCES drops(id),
     artist_id TEXT NOT NULL REFERENCES users(id),
-    budget REAL NOT NULL,
-    spent REAL NOT NULL DEFAULT 0,
+    budget_cents INTEGER NOT NULL,
+    spent_cents INTEGER NOT NULL DEFAULT 0,
     target_city TEXT,
     target_scene_id TEXT REFERENCES scenes(id),
-    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'exhausted')),
+    duration_hours INTEGER NOT NULL DEFAULT 24,
+    impressions INTEGER NOT NULL DEFAULT 0,
+    clicks INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'active', 'completed', 'cancelled')),
+    started_at TEXT,
+    expires_at TEXT,
+    stripe_session_id TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
@@ -122,6 +157,14 @@ CREATE TABLE IF NOT EXISTS label_artists (
     PRIMARY KEY (label_id, artist_id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_drop ON transactions(drop_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_stripe ON transactions(stripe_session_id);
+CREATE INDEX IF NOT EXISTS idx_follows_follower ON follows(follower_id);
+CREATE INDEX IF NOT EXISTS idx_follows_following ON follows(following_id);
+CREATE INDEX IF NOT EXISTS idx_badges_user ON badges(user_id);
+CREATE INDEX IF NOT EXISTS idx_boosts_drop ON boosts(drop_id);
+CREATE INDEX IF NOT EXISTS idx_boosts_artist ON boosts(artist_id);
 CREATE INDEX IF NOT EXISTS idx_drops_status ON drops(status);
 CREATE INDEX IF NOT EXISTS idx_drops_artist ON drops(artist_id);
 CREATE INDEX IF NOT EXISTS idx_drops_starts ON drops(starts_at);
@@ -149,11 +192,21 @@ def init_db():
 
     # Migration: add columns that may not exist in older DBs
     migrations = [
+        # Phase 1 migrations
         "ALTER TABLE drops ADD COLUMN city TEXT",
         "ALTER TABLE drops ADD COLUMN boost_active INTEGER NOT NULL DEFAULT 0",
-        "ALTER TABLE drop_access ADD COLUMN fan_number INTEGER",  # which # fan were they?
+        "ALTER TABLE drop_access ADD COLUMN fan_number INTEGER",
         "ALTER TABLE users ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE users ADD COLUMN follower_count INTEGER NOT NULL DEFAULT 0",
+        # Phase 2 migrations
+        "ALTER TABLE users ADD COLUMN stripe_customer_id TEXT",
+        "ALTER TABLE drops ADD COLUMN stripe_price_id TEXT",
+        "ALTER TABLE boosts ADD COLUMN stripe_session_id TEXT",
+        "ALTER TABLE boosts ADD COLUMN impressions INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE boosts ADD COLUMN clicks INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE boosts ADD COLUMN started_at TEXT",
+        "ALTER TABLE boosts ADD COLUMN expires_at TEXT",
+        "ALTER TABLE boosts ADD COLUMN duration_hours INTEGER NOT NULL DEFAULT 24",
     ]
     for sql in migrations:
         try:

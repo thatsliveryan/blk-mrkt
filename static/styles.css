@@ -827,3 +827,116 @@ img { max-width: 100%; display: block; }
   color: var(--red);
   margin-bottom: 4px;
 }
+
+/* ============================================================
+   Phase 2 — Badges, Analytics, Following
+   ============================================================ */
+
+/* Badge grid */
+.badge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 16px;
+  margin-top: 8px;
+}
+.badge-card {
+  background: var(--black-3);
+  border: 2px solid var(--black-5);
+  border-radius: var(--radius-lg);
+  padding: 20px 16px;
+  text-align: center;
+  transition: transform 0.15s, border-color 0.15s;
+}
+.badge-card:hover { transform: translateY(-2px); }
+.badge-emoji { font-size: 36px; margin-bottom: 10px; }
+.badge-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+}
+.badge-desc {
+  color: var(--gray-mid);
+  font-size: 11px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+.badge-date { color: var(--gray); font-size: 10px; }
+
+/* Funnel chart bars */
+.funnel-bars { display: flex; flex-direction: column; gap: 10px; }
+.funnel-row { display: flex; align-items: center; gap: 12px; }
+.funnel-label {
+  width: 70px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 1px;
+  flex-shrink: 0;
+}
+.funnel-bar-wrap {
+  flex: 1;
+  height: 20px;
+  background: var(--black-5);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.funnel-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.6s ease;
+  min-width: 2px;
+}
+.funnel-num {
+  width: 100px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* Following feed tab */
+.tab-bar .tab[data-v="following"] { position: relative; }
+
+/* Boost active bar on drop detail */
+.boost-active-bar {
+  background: linear-gradient(90deg, var(--red), #ff6b00);
+  color: white;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 6px 14px;
+  border-radius: 0 0 var(--radius) var(--radius);
+  text-align: center;
+  margin-top: -4px;
+}
+
+/* Boost badge on drop card */
+.boost-badge {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  background: linear-gradient(90deg, var(--red), #ff6b00);
+  color: white;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  padding: 3px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+}
+
+/* Card pad helper */
+.card-pad { padding: 20px; border-radius: var(--radius); }
+
+/* Following section in analytics */
+.analytics-section-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--gray-mid);
+  font-weight: 700;
+  margin-bottom: 12px;
+}
