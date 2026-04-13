@@ -2299,3 +2299,472 @@ window.state = state;
     render();
   }
 })();
+
+// ============================================================
+// LOADING BAR
+// ============================================================
+const LoadingBar = {
+  _el: null,
+  _timer: null,
+  show() {
+    let el = document.getElementById('loading-bar');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'loading-bar';
+      el.style.cssText = `
+        position:fixed;top:0;left:0;height:3px;width:0%;
+        background:linear-gradient(90deg,#e63946,#ff6b6b);
+        z-index:99999;transition:width 0.3s ease;
+        box-shadow:0 0 8px rgba(230,57,70,0.7);
+      `;
+      document.body.prepend(el);
+    }
+    this._el = el;
+    el.style.width = '0%';
+    el.style.opacity = '1';
+    clearTimeout(this._timer);
+    requestAnimationFrame(() => { el.style.width = '60%'; });
+  },
+  done() {
+    if (!this._el) return;
+    this._el.style.width = '100%';
+    this._timer = setTimeout(() => {
+      if (this._el) this._el.style.opacity = '0';
+    }, 350);
+  },
+};
+
+// Patch API.json to use loading bar + better error messages
+const _origJson = API.json.bind(API);
+API.json = async function(path, opts = {}) {
+  LoadingBar.show();
+  try {
+    const result = await _origJson(path, opts);
+    LoadingBar.done();
+    return result;
+  } catch (err) {
+    LoadingBar.done();
+    if (err.status === 429) {
+      const wait = err.retry_after || 60;
+      toast(`⏳ Slow down — try again in ${wait}s`, 'warning');
+    } else if (err.status === 451) {
+      toast('🚫 This content is under legal review', 'error');
+    } else if (err.status >= 500) {
+      toast('⚠️ Server error — please try again', 'error');
+    }
+    throw err;
+  }
+};
+
+
+// ============================================================
+// ONBOARDING OVERLAY
+// ============================================================
+const ONBOARDING_SLIDES = {
+  fan: [
+    { icon: '🔥', title: 'Welcome to BLK MRKT', body: 'Underground music drops — time-limited, scarce, and raw. No algorithms. Just fire.' },
+    { icon: '⚡', title: 'Claim Drops', body: 'When an artist drops, you have a limited window to claim it. Free or paid, first-come first-served.' },
+    { icon: '🏆', title: 'Earn Fan Badges', body: 'Be in the first 10 to claim a drop and get a rare First-N badge. Collect them all.' },
+    { icon: '🎧', title: 'Follow Artists', body: 'Follow your artists to see their drops first in your feed. Don\'t sleep.' },
+  ],
+  artist: [
+    { icon: '🎤', title: 'Drop Different', body: 'BLK MRKT is not Spotify. No streams, no playlists. You drop. Fans claim. Simple.' },
+    { icon: '💸', title: 'Keep 85%', body: 'Every sale goes directly to your Stripe account — 85% yours, automatically. Connect Stripe to get paid.' },
+    { icon: '📊', title: 'Real Analytics', body: 'See velocity, play counts, conversion funnels, and follower growth — in real time.' },
+    { icon: '🚀', title: 'Boost Your Drop', body: 'Boost a drop to multiply its feed velocity by up to 3x. Get seen when it matters.' },
+  ],
+  label: [
+    { icon: '🏷️', title: 'Manage Your Roster', body: 'Add artists to your label, track their drops, and see aggregate analytics.' },
+    { icon: '💰', title: 'Revenue Dashboard', body: 'See total revenue across all your artists with one view.' },
+    { icon: '📋', title: 'Drop Oversight', body: 'Review all drops from your roster from one dashboard.' },
+  ],
+};
+
+function showOnboarding(role) {
+  const slides = ONBOARDING_SLIDES[role] || ONBOARDING_SLIDES.fan;
+  let current = 0;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'onboarding-overlay';
+  overlay.style.cssText = `
+    position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:9999;
+    display:flex;align-items:center;justify-content:center;
+    animation:fadeIn 0.3s ease;
+  `;
+
+  function renderSlide() {
+    const s = slides[current];
+    const dots = slides.map((_, i) =>
+      `<div style="width:8px;height:8px;border-radius:50%;background:${i === current ? '#e63946' : '#333'};
+       transition:background 0.2s;"></div>`
+    ).join('');
+    const isLast = current === slides.length - 1;
+
+    overlay.innerHTML = `
+      <div style="max-width:420px;width:90%;background:#111;border:1px solid #222;border-radius:12px;padding:2.5rem;text-align:center;">
+        <div style="font-size:3.5rem;margin-bottom:1.2rem;">${s.icon}</div>
+        <h2 style="font-size:1.4rem;font-weight:800;color:#f0f0f0;margin-bottom:.8rem;">${s.title}</h2>
+        <p style="color:#999;line-height:1.7;margin-bottom:2rem;">${s.body}</p>
+        <div style="display:flex;justify-content:center;gap:8px;margin-bottom:2rem;">${dots}</div>
+        <div style="display:flex;gap:.8rem;">
+          ${current > 0 ? `<button onclick="_onb(-1)" style="flex:1;padding:.9rem;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#888;cursor:pointer;font-weight:600;">← Back</button>` : ''}
+          <button onclick="_onb(1)" style="flex:2;padding:.9rem;background:#e63946;border:none;border-radius:6px;color:white;cursor:pointer;font-weight:700;font-size:.95rem;">
+            ${isLast ? 'Get Started 🔥' : 'Next →'}
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  window._onb = function(dir) {
+    current = Math.min(Math.max(current + dir, 0), slides.length - 1);
+    if (current >= slides.length - 1 && dir === 1) {
+      // Last slide — close
+      overlay.remove();
+      delete window._onb;
+      return;
+    }
+    renderSlide();
+  };
+
+  // Override last slide behavior
+  window._onb = function(dir) {
+    const next = current + dir;
+    if (next >= slides.length) {
+      overlay.remove();
+      delete window._onb;
+      return;
+    }
+    current = Math.max(next, 0);
+    renderSlide();
+  };
+
+  renderSlide();
+  document.body.appendChild(overlay);
+}
+
+
+// ============================================================
+// PASSWORD RESET MODAL
+// ============================================================
+function showForgotPassword() {
+  const modal = document.createElement('div');
+  modal.style.cssText = `
+    position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9998;
+    display:flex;align-items:center;justify-content:center;
+  `;
+  modal.innerHTML = `
+    <div style="width:90%;max-width:400px;background:#111;border:1px solid #222;border-radius:10px;padding:2rem;">
+      <h3 style="color:#f0f0f0;margin-bottom:.5rem;font-size:1.1rem;">Reset Password</h3>
+      <p style="color:#888;font-size:.85rem;margin-bottom:1.2rem;">Enter your email and we'll send a reset link.</p>
+      <div id="fp-msg"></div>
+      <input id="fp-email" type="email" placeholder="your@email.com"
+        style="width:100%;padding:.75rem;background:#0a0a0a;border:1px solid #333;border-radius:6px;color:#f0f0f0;margin-bottom:.8rem;font-size:.9rem;">
+      <div style="display:flex;gap:.6rem;">
+        <button onclick="this.closest('[style]').remove()"
+          style="flex:1;padding:.75rem;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#888;cursor:pointer;">Cancel</button>
+        <button onclick="submitForgotPassword()"
+          style="flex:2;padding:.75rem;background:#e63946;border:none;border-radius:6px;color:white;font-weight:700;cursor:pointer;">Send Link</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+}
+window.showForgotPassword = showForgotPassword;
+
+window.submitForgotPassword = async function() {
+  const email = document.getElementById('fp-email')?.value?.trim();
+  const msg = document.getElementById('fp-msg');
+  if (!email) { msg.innerHTML = '<p style="color:#e63946;font-size:.85rem;margin-bottom:.8rem;">Enter your email.</p>'; return; }
+  try {
+    await API.json('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) });
+    msg.innerHTML = '<p style="color:#4caf50;font-size:.85rem;margin-bottom:.8rem;">✓ Check your email for a reset link.</p>';
+    setTimeout(() => document.getElementById('fp-email')?.closest('[style]')?.remove(), 3000);
+  } catch (e) {
+    msg.innerHTML = `<p style="color:#e63946;font-size:.85rem;margin-bottom:.8rem;">${esc(e.error || 'Error')}</p>`;
+  }
+};
+
+
+// ============================================================
+// RESET PASSWORD FORM (shown when ?reset_token=xxx is in URL)
+// ============================================================
+function showResetPasswordForm(token) {
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <div style="min-height:100vh;background:#0a0a0a;display:flex;align-items:center;justify-content:center;">
+      <div style="width:90%;max-width:380px;background:#111;border:1px solid #222;border-radius:12px;padding:2.5rem;text-align:center;">
+        <div style="font-size:2rem;margin-bottom:1rem;">🔐</div>
+        <h2 style="color:#f0f0f0;margin-bottom:.5rem;">Reset Password</h2>
+        <p style="color:#888;font-size:.85rem;margin-bottom:1.5rem;">Choose a new password for your account.</p>
+        <div id="rp-msg"></div>
+        <input id="rp-pw" type="password" placeholder="New password (6+ chars)"
+          style="width:100%;padding:.75rem;background:#0a0a0a;border:1px solid #333;border-radius:6px;color:#f0f0f0;margin-bottom:.8rem;font-size:.9rem;">
+        <input id="rp-pw2" type="password" placeholder="Confirm password"
+          style="width:100%;padding:.75rem;background:#0a0a0a;border:1px solid #333;border-radius:6px;color:#f0f0f0;margin-bottom:1.2rem;font-size:.9rem;">
+        <button onclick="submitResetPassword('${token}')"
+          style="width:100%;padding:.9rem;background:#e63946;border:none;border-radius:6px;color:white;font-weight:700;cursor:pointer;">
+          Reset Password
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+window.submitResetPassword = async function(token) {
+  const pw  = document.getElementById('rp-pw')?.value || '';
+  const pw2 = document.getElementById('rp-pw2')?.value || '';
+  const msg = document.getElementById('rp-msg');
+  if (pw.length < 6) { msg.innerHTML = '<p style="color:#e63946;font-size:.85rem;margin-bottom:.8rem;">Password must be at least 6 characters.</p>'; return; }
+  if (pw !== pw2)    { msg.innerHTML = '<p style="color:#e63946;font-size:.85rem;margin-bottom:.8rem;">Passwords do not match.</p>'; return; }
+  try {
+    const data = await API.json('/auth/reset-password', { method: 'POST', body: JSON.stringify({ token, new_password: pw }) });
+    state.token = data.access_token;
+    state.refreshToken = data.refresh_token;
+    // Fetch user profile
+    const me = await API.json('/auth/me');
+    state.user = me.user;
+    saveAuth();
+    // Clear URL token
+    history.replaceState({}, '', '/');
+    toast('✓ Password reset. Welcome back!', 'success');
+    nav(state.user.role === 'artist' ? 'artist-dashboard' : state.user.role === 'admin' ? 'admin-stats' : 'feed');
+  } catch (e) {
+    document.getElementById('rp-msg').innerHTML = `<p style="color:#e63946;font-size:.85rem;margin-bottom:.8rem;">${esc(e.error || 'Reset failed')}</p>`;
+  }
+};
+
+
+// ============================================================
+// EMAIL VERIFICATION BANNER
+// ============================================================
+function showVerifyBanner() {
+  if (!state.user || state.user.email_verified) return;
+  if (document.getElementById('verify-banner')) return;
+
+  const banner = document.createElement('div');
+  banner.id = 'verify-banner';
+  banner.style.cssText = `
+    position:fixed;bottom:0;left:0;right:0;background:#1a1a00;border-top:1px solid #4a4a00;
+    padding:.75rem 1.5rem;display:flex;align-items:center;justify-content:space-between;
+    gap:1rem;z-index:8000;font-size:.85rem;
+  `;
+  banner.innerHTML = `
+    <span style="color:#ffd700;">⚠️ Verify your email to unlock all features.</span>
+    <div style="display:flex;gap:.5rem;flex-shrink:0;">
+      <button onclick="resendVerification()" style="padding:.4rem .9rem;background:#4a4a00;border:1px solid #6a6a00;border-radius:4px;color:#ffd700;cursor:pointer;font-size:.8rem;">Resend Email</button>
+      <button onclick="document.getElementById('verify-banner').remove()" style="padding:.4rem .6rem;background:transparent;border:none;color:#888;cursor:pointer;font-size:.9rem;">✕</button>
+    </div>
+  `;
+  document.body.appendChild(banner);
+}
+
+window.resendVerification = async function() {
+  try {
+    await API.json('/auth/resend-verification', { method: 'POST', body: JSON.stringify({ email: state.user.email }) });
+    toast('✓ Verification email sent. Check your inbox.', 'success');
+  } catch (e) {
+    toast(e.error || 'Could not send email', 'error');
+  }
+};
+
+
+// ============================================================
+// PATCH: add ToS checkbox + forgot password to auth form
+// ============================================================
+const _origRenderAuth = renderAuth;
+window.renderAuth = renderAuth;
+
+// After render, inject ToS + forgot password
+const _origNav = nav;
+function nav(view, data = {}) {
+  state.view = view;
+  state.viewData = data;
+  render();
+  if (view !== 'auth') {
+    // Show email verification banner for unverified users
+    setTimeout(() => {
+      if (state.user && !state.user.email_verified) showVerifyBanner();
+    }, 500);
+  }
+}
+window.nav = nav;
+
+// Patch handleAuth to add ToS validation and onboarding trigger
+const _origHandleAuth = window.handleAuth;
+window.handleAuth = async function(e) {
+  e.preventDefault();
+  if (window._authMode === 'register') {
+    const tos = document.getElementById('tos-check');
+    if (!tos?.checked) {
+      document.getElementById('auth-error').innerHTML =
+        `<div class="auth-error">You must agree to the <a href="/terms.html" target="_blank" style="color:#e63946;">Terms of Service</a> and <a href="/privacy.html" target="_blank" style="color:#e63946;">Privacy Policy</a>.</div>`;
+      return;
+    }
+  }
+
+  const form = e.target;
+  const errDiv = document.getElementById('auth-error');
+  const btn = document.getElementById('auth-submit');
+  btn.disabled = true;
+  errDiv.innerHTML = '';
+
+  try {
+    let data;
+    if (window._authMode === 'register') {
+      const role = document.querySelector('.role-option.selected')?.dataset.role || 'fan';
+      data = await API.json('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({
+          username: form.username?.value || '',
+          email: form.email.value,
+          password: form.password.value,
+          role,
+          city: form.city?.value || '',
+          tos_agreed: true,
+        }),
+      });
+    } else {
+      data = await API.json('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: form.email.value, password: form.password.value }),
+      });
+    }
+
+    state.user = data.user;
+    state.token = data.access_token;
+    state.refreshToken = data.refresh_token;
+    saveAuth();
+
+    const isNew = window._authMode === 'register';
+
+    if (state.user.role === 'label') {
+      try {
+        const ld = await API.json('/labels/me');
+        state.label = ld.label;
+        nav(state.label ? 'label-roster' : 'label-setup');
+      } catch (_) { nav('label-setup'); }
+    } else if (state.user.role === 'artist') {
+      nav('artist-dashboard');
+      if (isNew) setTimeout(() => showOnboarding('artist'), 400);
+    } else if (state.user.role === 'admin') {
+      nav('admin-stats');
+    } else {
+      nav('feed');
+      if (isNew) setTimeout(() => showOnboarding('fan'), 400);
+    }
+  } catch (err) {
+    errDiv.innerHTML = `<div class="auth-error">${esc(err.error || 'Something went wrong')}</div>`;
+    btn.disabled = false;
+  }
+};
+
+// Inject ToS checkbox and forgot password link after auth form renders
+document.addEventListener('click', function(e) {
+  if (e.target.id === 'tab-register' || e.target.closest('#tab-register')) {
+    setTimeout(injectTosCheckbox, 50);
+  }
+});
+
+function injectTosCheckbox() {
+  if (document.getElementById('tos-row')) return;
+  const btn = document.getElementById('auth-submit');
+  if (!btn) return;
+  const row = document.createElement('div');
+  row.id = 'tos-row';
+  row.style.cssText = 'margin-bottom:.8rem;display:flex;align-items:flex-start;gap:.6rem;';
+  row.innerHTML = `
+    <input type="checkbox" id="tos-check" style="margin-top:3px;accent-color:#e63946;cursor:pointer;">
+    <label for="tos-check" style="font-size:.8rem;color:#888;cursor:pointer;line-height:1.5;">
+      I agree to the <a href="/terms.html" target="_blank" style="color:#e63946;">Terms of Service</a>
+      and <a href="/privacy.html" target="_blank" style="color:#e63946;">Privacy Policy</a>
+    </label>
+  `;
+  btn.parentNode.insertBefore(row, btn);
+}
+
+// Inject forgot password link after login form renders
+function injectForgotPasswordLink() {
+  if (document.getElementById('forgot-link')) return;
+  const btn = document.getElementById('auth-submit');
+  if (!btn || window._authMode !== 'login') return;
+  const link = document.createElement('div');
+  link.id = 'forgot-link';
+  link.style.cssText = 'text-align:center;margin-top:.6rem;';
+  link.innerHTML = `<a href="#" onclick="showForgotPassword();return false;" style="color:#666;font-size:.8rem;text-decoration:none;">Forgot password?</a>`;
+  btn.parentNode.insertBefore(link, btn.nextSibling);
+}
+
+// MutationObserver to inject ToS/forgot when auth form appears
+const _authObserver = new MutationObserver(() => {
+  if (document.getElementById('auth-submit')) {
+    if (window._authMode === 'register') injectTosCheckbox();
+    else injectForgotPasswordLink();
+  }
+});
+_authObserver.observe(document.body, { childList: true, subtree: true });
+
+
+// ============================================================
+// URL PARAM HANDLING: reset_token, verified
+// ============================================================
+(function handleURLParams() {
+  const params = new URLSearchParams(window.location.search);
+
+  const resetToken = params.get('reset_token');
+  if (resetToken) {
+    // Show reset password form
+    document.addEventListener('DOMContentLoaded', () => {
+      showResetPasswordForm(resetToken);
+    });
+    // Also handle if DOM is already ready
+    if (document.readyState !== 'loading') {
+      setTimeout(() => showResetPasswordForm(resetToken), 100);
+    }
+    return; // Don't run normal init
+  }
+
+  const verified = params.get('verified');
+  if (verified === '1') {
+    history.replaceState({}, '', '/');
+    toast('✓ Email verified! Welcome to BLK MRKT.', 'success');
+  }
+
+  const payment = params.get('payment');
+  if (payment === 'success') {
+    history.replaceState({}, '', '/');
+    toast('🎉 Purchase complete! Check your collection.', 'success');
+  }
+  if (payment === 'cancelled') {
+    history.replaceState({}, '', '/');
+    toast('Payment cancelled.', 'info');
+  }
+})();
+
+
+// ============================================================
+// FOOTER (Legal links — injected into all views)
+// ============================================================
+function injectFooter() {
+  if (document.getElementById('global-footer')) return;
+  const footer = document.createElement('div');
+  footer.id = 'global-footer';
+  footer.style.cssText = `
+    position:fixed;bottom:0;left:0;right:0;
+    background:rgba(0,0,0,0);
+    display:flex;justify-content:center;gap:1.5rem;
+    padding:.4rem;z-index:100;pointer-events:none;
+  `;
+  footer.innerHTML = `
+    <a href="/terms.html" target="_blank"
+       style="color:#333;font-size:.7rem;text-decoration:none;pointer-events:all;transition:color .2s;"
+       onmouseover="this.style.color='#888'" onmouseout="this.style.color='#333'">Terms</a>
+    <a href="/privacy.html" target="_blank"
+       style="color:#333;font-size:.7rem;text-decoration:none;pointer-events:all;transition:color .2s;"
+       onmouseover="this.style.color='#888'" onmouseout="this.style.color='#333'">Privacy</a>
+  `;
+  document.body.appendChild(footer);
+}
+document.addEventListener('DOMContentLoaded', injectFooter);
+if (document.readyState !== 'loading') injectFooter();
+

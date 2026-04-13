@@ -67,22 +67,40 @@ def create_drop(req):
     expires_at = data.get("expires_at") or None
 
     audio_path = None
+    r2_audio_key = None
     if audio_file and audio_file.filename:
         if not _allowed_file(audio_file.filename, ALLOWED_AUDIO_EXTENSIONS):
             return jsonify({"error": "Audio must be MP3 or WAV"}, 400), 400
         ext = audio_file.filename.rsplit(".", 1)[1].lower()
         audio_path = f"/data/audio/{drop_id}.{ext}"
+        local_audio_path = os.path.join(AUDIO_DIR, f"{drop_id}.{ext}")
         os.makedirs(AUDIO_DIR, exist_ok=True)
-        audio_file.save(os.path.join(AUDIO_DIR, f"{drop_id}.{ext}"))
+        audio_file.save(local_audio_path)
+        # Dual-write to R2
+        from storage import save_audio
+        r2_audio_key = f"audio/{drop_id}.{ext}"
+        ok, err = save_audio(local_audio_path, r2_audio_key)
+        if not ok:
+            print(f"[R2] Audio upload warning: {err}")
+            r2_audio_key = None
 
     cover_path = None
+    r2_cover_key = None
     if cover_file and cover_file.filename:
         if not _allowed_file(cover_file.filename, ALLOWED_IMAGE_EXTENSIONS):
             return jsonify({"error": "Image must be PNG, JPG, or WebP"}, 400), 400
         ext = cover_file.filename.rsplit(".", 1)[1].lower()
         cover_path = f"/data/covers/{drop_id}.{ext}"
+        local_cover_path = os.path.join(COVERS_DIR, f"{drop_id}.{ext}")
         os.makedirs(COVERS_DIR, exist_ok=True)
-        cover_file.save(os.path.join(COVERS_DIR, f"{drop_id}.{ext}"))
+        cover_file.save(local_cover_path)
+        # Dual-write to R2
+        from storage import save_cover
+        r2_cover_key = f"covers/{drop_id}.{ext}"
+        ok, err = save_cover(local_cover_path, r2_cover_key)
+        if not ok:
+            print(f"[R2] Cover upload warning: {err}")
+            r2_cover_key = None
 
     city = (data.get("city") or "").strip() or None
 
@@ -92,11 +110,12 @@ def create_drop(req):
             """INSERT INTO drops
             (id, artist_id, title, description, audio_path, cover_image_path,
              drop_type, total_supply, remaining_supply, access_price, own_price,
-             starts_at, expires_at, status, city)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             starts_at, expires_at, status, city, r2_audio_key, r2_cover_key)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (drop_id, srv.g.user_id, title, data.get("description", ""),
              audio_path, cover_path, drop_type, total_supply, total_supply,
-             access_price, own_price, starts_at, expires_at, "scheduled", city),
+             access_price, own_price, starts_at, expires_at, "scheduled", city,
+             r2_audio_key, r2_cover_key),
         )
         scene_ids = data.get("scene_ids")
         if scene_ids:

@@ -21,7 +21,8 @@ import server as srv
 from auth import require_auth, require_role
 from models import get_db, new_id, utcnow, row_to_dict, rows_to_list
 from config import (
-    STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PUBLISHABLE_KEY, PUBLIC_URL
+    STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PUBLISHABLE_KEY,
+    PUBLIC_URL, STRIPE_CONNECT_ENABLED
 )
 
 payments_bp = Blueprint("payments", prefix="/api/payments")
@@ -64,30 +65,46 @@ def _flatten_params(d, prefix=""):
 
 
 def create_checkout_session(drop, user, access_type="stream"):
-    """Create a Stripe Checkout Session for a drop purchase."""
+    """
+    Create a Stripe Checkout Session for a drop purchase.
+    If artist has Stripe Connect, routes 85% to them and keeps 15% as platform fee.
+    """
     if not STRIPE_SECRET_KEY:
         return None, "Stripe not configured"
 
-    price_cents = int((drop["access_price"] if access_type == "stream" else (drop.get("own_price") or drop["access_price"])) * 100)
-    drop_title = drop["title"][:80]  # Stripe has a name length limit
+    price_cents = int((
+        drop["access_price"] if access_type == "stream"
+        else (drop.get("own_price") or drop["access_price"])
+    ) * 100)
+    drop_title = drop["title"][:80]
 
-    params = _flatten_params({
+    params = {
         "mode": "payment",
         "success_url": f"{PUBLIC_URL}/?drop={drop['id']}&payment=success",
         "cancel_url":  f"{PUBLIC_URL}/?drop={drop['id']}&payment=cancelled",
         "line_items[0][price_data][currency]": "usd",
         "line_items[0][price_data][unit_amount]": str(price_cents),
         "line_items[0][price_data][product_data][name]": drop_title,
-        "line_items[0][price_data][product_data][description]": f"{'Stream access' if access_type == 'stream' else 'Ownership'} — BLK MRKT Drop",
+        "line_items[0][price_data][product_data][description]": (
+            f"{'Stream access' if access_type == 'stream' else 'Ownership'} — BLK MRKT"
+        ),
         "line_items[0][quantity]": "1",
         "metadata[drop_id]": drop["id"],
         "metadata[user_id]": user["id"],
         "metadata[access_type]": access_type,
         "metadata[price_cents]": str(price_cents),
         "client_reference_id": user["id"],
-    })
+    }
 
-    result = _stripe_request("POST", "/checkout/sessions", params)
+    # Stripe Connect split — 15% platform fee → 85% to artist
+    if STRIPE_CONNECT_ENABLED and drop.get("artist_connect_id"):
+        platform_fee = int(price_cents * 0.15)
+        params["payment_intent_data[application_fee_amount]"] = str(platform_fee)
+        params["payment_intent_data[transfer_data][destination]"] = drop["artist_connect_id"]
+        params["metadata[platform_fee_cents]"] = str(platform_fee)
+        params["metadata[artist_connect_id]"] = drop["artist_connect_id"]
+
+    result = _stripe_request("POST", "/checkout/sessions", _flatten_params(params))
     if "url" in result:
         return result["url"], None
     return None, result.get("error", {}).get("message", "Stripe error")
@@ -199,6 +216,17 @@ def create_checkout(req):
     # Free drop — use direct claim instead
     if price <= 0:
         return jsonify({"error": "Free drops use /api/drops/:id/access directly"}, 400), 400
+
+    # Check artist Connect status — warn if not set up
+    if STRIPE_CONNECT_ENABLED:
+        artist = row_to_dict(conn.execute(
+            "SELECT stripe_connect_id, stripe_onboarded FROM users WHERE id = ?",
+            (drop["artist_id"],)
+        ).fetchone()) if True else None
+        if artist and not artist.get("stripe_onboarded"):
+            drop["artist_connect_id"] = None  # Don't route through Connect
+        else:
+            drop["artist_connect_id"] = artist.get("stripe_connect_id") if artist else None
 
     checkout_url, err = create_checkout_session(drop, user, access_type)
     if err:
@@ -395,6 +423,87 @@ def _handle_payment_failed(payment_intent_obj):
         conn.commit()
     finally:
         conn.close()
+
+
+@payments_bp.route("/refund", methods=["POST"])
+@require_auth
+@require_role("admin")
+def process_refund(req):
+    """Admin: process a refund for a transaction. Revokes drop access + restores supply."""
+    from datetime import datetime, timezone, timedelta
+    data = req.get_json(silent=True) or {}
+    txn_id = (data.get("transaction_id") or "").strip()
+    reason = (data.get("reason") or "Admin-processed refund").strip()
+    force = data.get("force", False)  # Admin override for >24h refunds
+
+    if not txn_id:
+        return jsonify({"error": "transaction_id required"}, 400), 400
+
+    conn = get_db()
+    try:
+        txn = row_to_dict(conn.execute(
+            "SELECT * FROM transactions WHERE id = ?", (txn_id,)
+        ).fetchone())
+        if not txn:
+            return jsonify({"error": "Transaction not found"}, 404), 404
+        if txn["status"] != "completed":
+            return jsonify({"error": f"Cannot refund a {txn['status']} transaction"}, 400), 400
+        if txn["type"] != "drop_purchase":
+            return jsonify({"error": "Only drop_purchase transactions can be refunded"}, 400), 400
+
+        # Enforce 24h window unless forced
+        if not force:
+            try:
+                created = datetime.fromisoformat(txn["created_at"].replace("Z", "+00:00"))
+                if datetime.now(timezone.utc) - created > timedelta(hours=24):
+                    return jsonify({
+                        "error": "Refund window expired (>24h). Use force=true to override.",
+                        "created_at": txn["created_at"],
+                    }, 400), 400
+            except Exception:
+                pass
+
+        # Call Stripe refund API
+        stripe_pi = txn.get("stripe_payment_intent", "")
+        refund_result = None
+        if stripe_pi and STRIPE_SECRET_KEY:
+            refund_data = {"payment_intent": stripe_pi}
+            refund_result = _stripe_request("POST", "/refunds", refund_data)
+            if refund_result.get("error"):
+                return jsonify({
+                    "error": "Stripe refund failed",
+                    "stripe_error": refund_result["error"].get("message", ""),
+                }, 502), 502
+
+        # Update transaction status
+        from models import utcnow
+        conn.execute(
+            "UPDATE transactions SET status = 'refunded', refunded_at = ?, refund_reason = ? WHERE id = ?",
+            (utcnow(), reason, txn_id)
+        )
+
+        # Revoke drop access
+        if txn.get("drop_id") and txn.get("user_id"):
+            conn.execute(
+                "DELETE FROM drop_access WHERE user_id = ? AND drop_id = ?",
+                (txn["user_id"], txn["drop_id"])
+            )
+            # Restore supply
+            conn.execute(
+                "UPDATE drops SET remaining_supply = remaining_supply + 1 WHERE id = ? AND total_supply IS NOT NULL",
+                (txn["drop_id"],)
+            )
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return jsonify({
+        "refunded": True,
+        "amount_cents": txn["amount_cents"],
+        "transaction_id": txn_id,
+        "stripe_refund_id": refund_result.get("id") if refund_result else None,
+    })
 
 
 @payments_bp.route("/history", methods=["GET"])

@@ -157,6 +157,36 @@ CREATE TABLE IF NOT EXISTS label_artists (
     PRIMARY KEY (label_id, artist_id)
 );
 
+CREATE TABLE IF NOT EXISTS dmca_reports (
+    id TEXT PRIMARY KEY,
+    drop_id TEXT NOT NULL REFERENCES drops(id),
+    claimant_name TEXT NOT NULL,
+    claimant_email TEXT NOT NULL,
+    original_work TEXT NOT NULL,
+    statement_confirmed INTEGER NOT NULL DEFAULT 0,
+    perjury_confirmed INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    counter_statement TEXT,
+    counter_filed_at TEXT,
+    admin_notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+    resolved_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS email_verifications (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS password_resets (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_drop ON transactions(drop_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_stripe ON transactions(stripe_session_id);
@@ -172,6 +202,9 @@ CREATE INDEX IF NOT EXISTS idx_drop_access_user ON drop_access(user_id);
 CREATE INDEX IF NOT EXISTS idx_drop_access_drop ON drop_access(drop_id);
 CREATE INDEX IF NOT EXISTS idx_drop_engagement_drop ON drop_engagement(drop_id);
 CREATE INDEX IF NOT EXISTS idx_drop_engagement_user ON drop_engagement(user_id);
+CREATE INDEX IF NOT EXISTS idx_dmca_drop ON dmca_reports(drop_id);
+CREATE INDEX IF NOT EXISTS idx_email_verif_user ON email_verifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
 """
 
 
@@ -207,6 +240,17 @@ def init_db():
         "ALTER TABLE boosts ADD COLUMN started_at TEXT",
         "ALTER TABLE boosts ADD COLUMN expires_at TEXT",
         "ALTER TABLE boosts ADD COLUMN duration_hours INTEGER NOT NULL DEFAULT 24",
+        # Phase 3 migrations
+        "ALTER TABLE users ADD COLUMN stripe_connect_id TEXT",
+        "ALTER TABLE users ADD COLUMN stripe_onboarded INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE users ADD COLUMN tos_agreed INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE drops ADD COLUMN dmca_review INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE drops ADD COLUMN r2_audio_key TEXT",
+        "ALTER TABLE drops ADD COLUMN r2_cover_key TEXT",
+        "ALTER TABLE transactions ADD COLUMN refunded_at TEXT",
+        "ALTER TABLE transactions ADD COLUMN refund_reason TEXT",
+        "ALTER TABLE transactions ADD COLUMN stripe_connect_id TEXT",
     ]
     for sql in migrations:
         try:

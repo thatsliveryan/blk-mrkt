@@ -32,6 +32,8 @@ from payments import payments_bp
 from follows import follows_bp
 from badges import badges_bp
 from analytics import analytics_bp
+from connect import connect_bp
+from dmca import dmca_bp, admin_dmca_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(drops_bp)
@@ -45,6 +47,9 @@ app.register_blueprint(payments_bp)
 app.register_blueprint(follows_bp)
 app.register_blueprint(badges_bp)
 app.register_blueprint(analytics_bp)
+app.register_blueprint(connect_bp)
+app.register_blueprint(dmca_bp)
+app.register_blueprint(admin_dmca_bp)
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +65,26 @@ def health(req):
     finally:
         conn.close()
     return jsonify({"status": "alive", "drops": count})
+
+
+# ---------------------------------------------------------------------------
+# Admin reseed
+# ---------------------------------------------------------------------------
+@app.route('/api/admin/reseed')
+def reseed(req):
+    from auth import require_auth, require_role
+    from config import ADMIN_SECRET
+    secret = req.query.get("secret") or (req.json or {}).get("secret", "")
+    if secret != ADMIN_SECRET:
+        return jsonify({"error": "Unauthorized"}, 403), 403
+    try:
+        import seed
+        result = seed.run_seed()
+        return jsonify({"seeded": True, "result": result})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}, 500), 500
 
 
 # ---------------------------------------------------------------------------
@@ -228,12 +253,22 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
         """Serve audio with range request support. Requires access for non-open drops."""
         conn = get_db()
         try:
-            drop = conn.execute("SELECT audio_path, status, drop_type FROM drops WHERE id = ?", (drop_id,)).fetchone()
+            drop = conn.execute(
+                "SELECT audio_path, r2_audio_key, status, drop_type, dmca_review FROM drops WHERE id = ?",
+                (drop_id,)
+            ).fetchone()
         finally:
             conn.close()
 
-        if not drop or not drop["audio_path"]:
+        if not drop or (not drop["audio_path"] and not drop["r2_audio_key"]):
             self._send_response(jsonify({"error": "Audio not found"}, status=404))
+            return
+
+        # DMCA block — drop is under review, audio cannot be served
+        if drop["dmca_review"]:
+            self._send_response(jsonify({
+                "error": "This content is under DMCA review and cannot be streamed at this time."
+            }, status=451))  # 451 Unavailable For Legal Reasons
             return
 
         if drop["status"] == "locked":
@@ -261,50 +296,68 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
                 self._send_response(jsonify({"error": "Access required"}, status=403))
                 return
 
-        filename = os.path.basename(drop["audio_path"])
-        filepath = os.path.join(AUDIO_DIR, filename)
+        # Try local file first, fall back to R2
+        local_path = None
+        if drop["audio_path"]:
+            filename = os.path.basename(drop["audio_path"])
+            candidate = os.path.join(AUDIO_DIR, filename)
+            if os.path.exists(candidate):
+                local_path = candidate
 
-        if not os.path.exists(filepath):
-            self._send_response(jsonify({"error": "Audio file missing"}, status=404))
-            return
+        if local_path:
+            # Serve from local filesystem with range support
+            file_size = os.path.getsize(local_path)
+            ext = local_path.rsplit(".", 1)[-1].lower()
+            mime = "audio/mpeg" if ext == "mp3" else "audio/wav"
 
-        file_size = os.path.getsize(filepath)
-        ext = filename.rsplit(".", 1)[-1].lower()
-        mime = "audio/mpeg" if ext == "mp3" else "audio/wav"
+            range_header = req.headers.get('range', '')
+            if range_header:
+                match = re.search(r'bytes=(\d+)-(\d*)', range_header)
+                if match:
+                    start = int(match.group(1))
+                    end = int(match.group(2)) if match.group(2) else file_size - 1
+                    end = min(end, file_size - 1)
+                    length = end - start + 1
+                    with open(local_path, 'rb') as f:
+                        f.seek(start)
+                        data = f.read(length)
+                    self.send_response(206)
+                    self.send_header('Content-Type', mime)
+                    self.send_header('Content-Range', f'bytes {start}-{end}/{file_size}')
+                    self.send_header('Accept-Ranges', 'bytes')
+                    self.send_header('Content-Length', str(length))
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
 
-        range_header = req.headers.get('range', '')
-        if range_header:
-            match = re.search(r'bytes=(\d+)-(\d*)', range_header)
-            if match:
-                start = int(match.group(1))
-                end = int(match.group(2)) if match.group(2) else file_size - 1
-                end = min(end, file_size - 1)
-                length = end - start + 1
+            with open(local_path, 'rb') as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_header('Content-Type', mime)
+            self.send_header('Content-Length', str(file_size))
+            self.send_header('Accept-Ranges', 'bytes')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(data)
 
-                with open(filepath, 'rb') as f:
-                    f.seek(start)
-                    data = f.read(length)
-
-                self.send_response(206)
-                self.send_header('Content-Type', mime)
-                self.send_header('Content-Range', f'bytes {start}-{end}/{file_size}')
-                self.send_header('Accept-Ranges', 'bytes')
-                self.send_header('Content-Length', str(length))
-                self.send_header('Access-Control-Allow-Origin', '*')
-                self.end_headers()
-                self.wfile.write(data)
+        elif drop["r2_audio_key"]:
+            # Fall back to R2
+            from storage import fetch_audio
+            data, mime = fetch_audio(drop["r2_audio_key"])
+            if not data:
+                self._send_response(jsonify({"error": "Audio file missing"}, status=404))
                 return
+            self.send_response(200)
+            self.send_header('Content-Type', mime or 'audio/mpeg')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Accept-Ranges', 'bytes')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(data)
 
-        with open(filepath, 'rb') as f:
-            data = f.read()
-
-        self.send_response(200)
-        self.send_header('Content-Type', mime)
-        self.send_header('Content-Length', str(file_size))
-        self.send_header('Accept-Ranges', 'bytes')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(data)
+        else:
+            self._send_response(jsonify({"error": "Audio file missing"}, status=404))
 
     def _serve_file(self, directory, filename):
         """Serve a static file from a directory. Guards against path traversal."""
