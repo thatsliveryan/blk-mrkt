@@ -34,6 +34,7 @@ from badges import badges_bp
 from analytics import analytics_bp
 from connect import connect_bp
 from dmca import dmca_bp, admin_dmca_bp
+from tiers import tiers_bp
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(drops_bp)
@@ -50,6 +51,7 @@ app.register_blueprint(analytics_bp)
 app.register_blueprint(connect_bp)
 app.register_blueprint(dmca_bp)
 app.register_blueprint(admin_dmca_bp)
+app.register_blueprint(tiers_bp)
 
 
 # ---------------------------------------------------------------------------

@@ -63,6 +63,23 @@ def create_drop(req):
     else:
         own_price = None
 
+    # $2 minimum for any paid drop
+    MIN_PAID_PRICE = 2.00
+    LOW_PRICE_WARNING = 4.99
+    price_warning = None
+    if access_price > 0 and access_price < MIN_PAID_PRICE:
+        return jsonify({
+            "error": f"Minimum drop price is ${MIN_PAID_PRICE:.2f}. Set to 0 for a free drop.",
+            "min_price": MIN_PAID_PRICE,
+        }, 400), 400
+    if own_price is not None and own_price > 0 and own_price < MIN_PAID_PRICE:
+        return jsonify({
+            "error": f"Minimum ownership price is ${MIN_PAID_PRICE:.2f}.",
+            "min_price": MIN_PAID_PRICE,
+        }, 400), 400
+    if 0 < access_price <= LOW_PRICE_WARNING:
+        price_warning = f"Low price alert: at ${access_price:.2f} per claim, you keep ${access_price * 0.85:.2f} on the Free plan. Consider upgrading to keep more."
+
     starts_at = data.get("starts_at") or utcnow()
     expires_at = data.get("expires_at") or None
 
@@ -128,7 +145,10 @@ def create_drop(req):
         conn.close()
 
     transition_drop_states()
-    return jsonify({"drop": {"id": drop_id, "title": title, "status": "scheduled"}}, 201), 201
+    resp = {"drop": {"id": drop_id, "title": title, "status": "scheduled"}}
+    if price_warning:
+        resp["warning"] = price_warning
+    return jsonify(resp, 201), 201
 
 
 @drops_bp.route("", methods=["GET"])

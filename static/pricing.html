@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pricing — BLK MRKT</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0a; --surface: #141414; --surface2: #1a1a1a;
+      --border: #222; --border2: #2a2a2a;
+      --red: #e63946; --red-dim: rgba(230,57,70,0.15);
+      --text: #f0f0f0; --muted: #888; --dim: #555;
+      --green: #2ecc71; --gold: #f5c518;
+      --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --radius: 12px;
+    }
+    body { background: var(--bg); color: var(--text); font-family: var(--font); line-height: 1.6; min-height: 100vh; }
+
+    /* ---- Header ---- */
+    header {
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 2rem;
+      display: flex; align-items: center; gap: 1rem;
+      position: sticky; top: 0; background: rgba(10,10,10,0.95);
+      backdrop-filter: blur(8px); z-index: 10;
+    }
+    header a.logo { color: var(--red); text-decoration: none; font-weight: 800; font-size: 1.2rem; letter-spacing: .06em; }
+    header span { color: var(--muted); font-size: .85rem; }
+    header .cta { margin-left: auto; }
+    header .cta a {
+      background: var(--red); color: #fff; padding: .45rem 1rem;
+      border-radius: 6px; text-decoration: none; font-size: .85rem; font-weight: 600;
+    }
+
+    /* ---- Hero ---- */
+    .hero { text-align: center; padding: 4rem 2rem 2rem; }
+    .hero h1 { font-size: clamp(2rem, 5vw, 3.2rem); font-weight: 900; margin-bottom: .75rem; }
+    .hero h1 span { color: var(--red); }
+    .hero p { color: var(--muted); font-size: 1.1rem; max-width: 520px; margin: 0 auto; }
+
+    /* ---- Toggle ---- */
+    .toggle-row { display: flex; justify-content: center; align-items: center; gap: 1rem; margin: 2.5rem 0 1.5rem; }
+    .toggle-row span { color: var(--muted); font-size: .9rem; }
+    .toggle-row .badge { background: var(--green); color: #000; font-size: .7rem; font-weight: 700; padding: .15rem .45rem; border-radius: 20px; margin-left: .3rem; }
+
+    /* ---- Tier Grid ---- */
+    .tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1.5rem; max-width: 1080px; margin: 0 auto; padding: 0 2rem 3rem; }
+
+    .tier-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.75rem 1.5rem;
+      display: flex; flex-direction: column; gap: .5rem;
+      position: relative; transition: border-color .2s;
+    }
+    .tier-card:hover { border-color: var(--border2); }
+    .tier-card.featured {
+      border-color: var(--red);
+      background: linear-gradient(180deg, rgba(230,57,70,.05) 0%, var(--surface) 40%);
+    }
+    .tier-card.featured::before {
+      content: "MOST POPULAR";
+      position: absolute; top: -1px; left: 50%; transform: translateX(-50%);
+      background: var(--red); color: #fff; font-size: .65rem; font-weight: 800;
+      letter-spacing: .1em; padding: .2rem .75rem; border-radius: 0 0 6px 6px;
+    }
+
+    .tier-name { font-size: .75rem; font-weight: 700; letter-spacing: .12em; color: var(--muted); text-transform: uppercase; }
+    .tier-price { font-size: 2.5rem; font-weight: 900; line-height: 1; margin: .25rem 0; }
+    .tier-price .cents { font-size: 1rem; font-weight: 400; color: var(--muted); }
+    .tier-price .period { font-size: .9rem; font-weight: 400; color: var(--muted); }
+    .tier-fee { font-size: 1.1rem; font-weight: 700; color: var(--red); margin-bottom: .25rem; }
+    .tier-fee small { font-weight: 400; color: var(--muted); font-size: .8rem; }
+    .tier-desc { color: var(--muted); font-size: .85rem; margin-bottom: .5rem; }
+
+    .tier-features { list-style: none; display: flex; flex-direction: column; gap: .5rem; flex: 1; }
+    .tier-features li { font-size: .875rem; display: flex; gap: .5rem; align-items: flex-start; }
+    .tier-features li .check { color: var(--green); font-size: .8rem; flex-shrink: 0; margin-top: .15rem; }
+    .tier-features li .dash { color: var(--dim); font-size: .8rem; flex-shrink: 0; margin-top: .15rem; }
+    .tier-features li.muted-feat { color: var(--dim); }
+
+    .tier-btn {
+      display: block; text-align: center; padding: .75rem; border-radius: 8px;
+      font-weight: 700; font-size: .9rem; text-decoration: none; margin-top: 1.25rem;
+      cursor: pointer; border: none; transition: opacity .15s;
+    }
+    .tier-btn:hover { opacity: .85; }
+    .tier-btn.primary { background: var(--red); color: #fff; }
+    .tier-btn.secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border2); }
+    .tier-btn.outline { background: transparent; color: var(--red); border: 1px solid var(--red); }
+
+    /* ---- Stripe fee note ---- */
+    .stripe-note {
+      text-align: center; color: var(--muted); font-size: .8rem; margin: 0 auto 3rem;
+      max-width: 600px; padding: 0 2rem;
+    }
+    .stripe-note strong { color: var(--text); }
+
+    /* ---- Comparison table ---- */
+    .section { max-width: 900px; margin: 0 auto; padding: 0 2rem 4rem; }
+    .section h2 { font-size: 1.5rem; font-weight: 800; margin-bottom: 1.5rem; }
+    .section h2 span { color: var(--red); }
+
+    table.compare { width: 100%; border-collapse: collapse; font-size: .875rem; }
+    table.compare th {
+      text-align: left; padding: .75rem 1rem; font-size: .7rem; font-weight: 700;
+      letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    table.compare th:not(:first-child) { text-align: center; }
+    table.compare td {
+      padding: .75rem 1rem; border-bottom: 1px solid var(--border);
+      color: #ccc; vertical-align: middle;
+    }
+    table.compare td:not(:first-child) { text-align: center; }
+    table.compare tr:hover td { background: rgba(255,255,255,.02); }
+    table.compare .yes { color: var(--green); font-weight: 700; }
+    table.compare .no { color: var(--dim); }
+    table.compare .val { color: var(--text); font-weight: 600; }
+    table.compare .cat td { background: rgba(230,57,70,.06); color: var(--red); font-weight: 700; font-size: .75rem; letter-spacing: .08em; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+    table.compare .highlight td { background: rgba(230,57,70,.04); }
+
+    /* ---- Math sells itself ---- */
+    .math-box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 2rem; margin-bottom: 4rem;
+    }
+    .math-box h3 { font-size: 1.1rem; font-weight: 800; margin-bottom: 1.25rem; }
+    .math-box h3 span { color: var(--red); }
+    .math-row { display: flex; justify-content: space-between; align-items: center; padding: .6rem 0; border-bottom: 1px solid var(--border); font-size: .9rem; }
+    .math-row:last-child { border-bottom: none; font-weight: 700; font-size: 1rem; }
+    .math-row .label { color: var(--muted); }
+    .math-row .val { font-weight: 600; }
+    .math-row.savings .val { color: var(--green); font-weight: 800; font-size: 1.1rem; }
+
+    /* ---- Competitor compare ---- */
+    .vs-table td:first-child { min-width: 160px; }
+
+    /* ---- FAQ ---- */
+    .faq-list { display: flex; flex-direction: column; gap: 1rem; }
+    details { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem 1.25rem; }
+    summary { font-weight: 600; cursor: pointer; font-size: .95rem; list-style: none; display: flex; justify-content: space-between; }
+    summary::after { content: "+"; color: var(--red); font-size: 1.2rem; line-height: 1; }
+    details[open] summary::after { content: "−"; }
+    details p { color: var(--muted); font-size: .875rem; margin-top: .75rem; line-height: 1.7; }
+
+    /* ---- Footer ---- */
+    footer { text-align: center; color: var(--muted); font-size: .8rem; padding: 2rem; border-top: 1px solid var(--border); }
+    footer a { color: var(--muted); text-decoration: underline; }
+
+    @media (max-width: 600px) {
+      .tiers { grid-template-columns: 1fr; }
+      table.compare { font-size: .8rem; }
+      table.compare th, table.compare td { padding: .6rem .5rem; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="logo" href="/">BLK MRKT</a>
+  <span>/ Pricing</span>
+  <div class="cta"><a href="/">Start Dropping →</a></div>
+</header>
+
+<!-- Hero -->
+<div class="hero">
+  <h1>Keep more of what<br>you <span>actually earn</span></h1>
+  <p>Our fee drops as you grow. Artists on Pro keep 97 cents of every dollar. Label tier keeps 100%.</p>
+</div>
+
+<!-- Tier cards -->
+<div class="tiers">
+
+  <!-- Free -->
+  <div class="tier-card">
+    <div class="tier-name">Free</div>
+    <div class="tier-price">$0 <span class="period">/mo</span></div>
+    <div class="tier-fee">15% <small>platform fee per sale</small></div>
+    <div class="tier-desc">For artists just getting started.</div>
+    <ul class="tier-features">
+      <li><span class="check">✓</span> Unlimited drops</li>
+      <li><span class="check">✓</span> Open, timed & limited drops</li>
+      <li><span class="check">✓</span> Basic analytics</li>
+      <li><span class="check">✓</span> $50/mo boost budget</li>
+      <li class="muted-feat"><span class="dash">—</span> Rare drop type</li>
+      <li class="muted-feat"><span class="dash">—</span> Priority discovery</li>
+      <li class="muted-feat"><span class="dash">—</span> Advanced analytics</li>
+    </ul>
+    <a href="/" class="tier-btn secondary">Get Started Free</a>
+  </div>
+
+  <!-- Hustler -->
+  <div class="tier-card">
+    <div class="tier-name">Hustler</div>
+    <div class="tier-price">$9 <span class="period">/mo</span></div>
+    <div class="tier-fee">8% <small>platform fee per sale</small></div>
+    <div class="tier-desc">Drop regularly. Keep almost double.</div>
+    <ul class="tier-features">
+      <li><span class="check">✓</span> Everything in Free</li>
+      <li><span class="check">✓</span> 8% fee (vs 15% Free)</li>
+      <li><span class="check">✓</span> $100/mo boost budget</li>
+      <li><span class="check">✓</span> Rare drop type</li>
+      <li><span class="check">✓</span> Tier badge on profile</li>
+      <li class="muted-feat"><span class="dash">—</span> Priority discovery</li>
+      <li class="muted-feat"><span class="dash">—</span> Advanced analytics</li>
+    </ul>
+    <a href="/?upgrade=hustler" class="tier-btn outline" data-tier="hustler">Upgrade to Hustler</a>
+  </div>
+
+  <!-- Pro -->
+  <div class="tier-card featured">
+    <div class="tier-name">Pro</div>
+    <div class="tier-price">$29 <span class="period">/mo</span></div>
+    <div class="tier-fee">3% <small>platform fee per sale</small></div>
+    <div class="tier-desc">Serious artists. Near-zero platform cut.</div>
+    <ul class="tier-features">
+      <li><span class="check">✓</span> Everything in Hustler</li>
+      <li><span class="check">✓</span> 3% fee (you keep 97%)</li>
+      <li><span class="check">✓</span> $250/mo boost budget</li>
+      <li><span class="check">✓</span> Priority discovery ranking</li>
+      <li><span class="check">✓</span> Advanced analytics</li>
+      <li><span class="check">✓</span> Pro badge on profile</li>
+      <li><span class="check">✓</span> Early access to new features</li>
+    </ul>
+    <a href="/?upgrade=pro" class="tier-btn primary" data-tier="pro">Upgrade to Pro</a>
+  </div>
+
+  <!-- Label -->
+  <div class="tier-card">
+    <div class="tier-name">Label</div>
+    <div class="tier-price">$99 <span class="period">/mo</span></div>
+    <div class="tier-fee">0% <small>platform fee — keep everything</small></div>
+    <div class="tier-desc">Run a label operation. Zero cuts.</div>
+    <ul class="tier-features">
+      <li><span class="check">✓</span> Everything in Pro</li>
+      <li><span class="check">✓</span> Zero platform fee</li>
+      <li><span class="check">✓</span> Unlimited boost budget</li>
+      <li><span class="check">✓</span> Multi-artist management</li>
+      <li><span class="check">✓</span> Label badge + verified status</li>
+      <li><span class="check">✓</span> Dedicated support</li>
+      <li><span class="check">✓</span> API access (coming soon)</li>
+    </ul>
+    <a href="/?upgrade=label" class="tier-btn outline" data-tier="label">Go Label</a>
+  </div>
+
+</div>
+
+<!-- Stripe fee note -->
+<p class="stripe-note">
+  <strong>Stripe fees are the same across all plans:</strong> 2.9% + 30¢ per transaction.
+  This is Stripe's standard processing fee — it goes directly to Stripe, not BLK MRKT.
+  The platform fees above are BLK MRKT's cut only.
+</p>
+
+<!-- Math sells itself -->
+<div class="section">
+  <h2>The <span>math</span> sells itself</h2>
+  <div class="math-box">
+    <h3>If you earn <span>$500/mo</span> in drop sales:</h3>
+    <div class="math-row">
+      <span class="label">Free (15% fee)</span>
+      <span class="val">You keep $425/mo — pay $0/mo sub</span>
+    </div>
+    <div class="math-row">
+      <span class="label">Hustler (8% fee + $9/mo)</span>
+      <span class="val">You keep $451/mo — save $26/mo vs Free</span>
+    </div>
+    <div class="math-row">
+      <span class="label">Pro (3% fee + $29/mo)</span>
+      <span class="val">You keep $456/mo — save $31/mo vs Free</span>
+    </div>
+    <div class="math-row savings">
+      <span class="label">Label (0% fee + $99/mo)</span>
+      <span class="val">You keep $401/mo ← Free is better at this volume</span>
+    </div>
+    <p style="font-size:.8rem;color:var(--muted);margin-top:1rem;">
+      * Stripe's 2.9% + 30¢/transaction fee is excluded from this example for simplicity.
+      The savings shown are BLK MRKT platform fees only.
+      Pro makes sense at ~$215+/mo. Label pays off above ~$660+/mo in drop sales.
+    </p>
+  </div>
+</div>
+
+<!-- Feature comparison table -->
+<div class="section">
+  <h2>Full <span>feature</span> comparison</h2>
+  <table class="compare">
+    <thead>
+      <tr>
+        <th>Feature</th>
+        <th>Free</th>
+        <th>Hustler</th>
+        <th>Pro</th>
+        <th>Label</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="cat"><td colspan="5">💰 Revenue</td></tr>
+      <tr class="highlight">
+        <td>Platform fee per sale</td>
+        <td class="val">15%</td>
+        <td class="val">8%</td>
+        <td class="val">3%</td>
+        <td class="val">0%</td>
+      </tr>
+      <tr>
+        <td>Stripe processing fee</td>
+        <td class="val">2.9% + 30¢</td>
+        <td class="val">2.9% + 30¢</td>
+        <td class="val">2.9% + 30¢</td>
+        <td class="val">2.9% + 30¢</td>
+      </tr>
+      <tr>
+        <td>Monthly subscription</td>
+        <td class="val">$0</td>
+        <td class="val">$9</td>
+        <td class="val">$29</td>
+        <td class="val">$99</td>
+      </tr>
+      <tr>
+        <td>Stripe Connect payouts</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+
+      <tr class="cat"><td colspan="5">🎵 Drops</td></tr>
+      <tr>
+        <td>Unlimited drops</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+      <tr>
+        <td>Open / Timed / Limited drops</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+      <tr>
+        <td>Rare drop type</td>
+        <td class="no">—</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+      <tr>
+        <td>Fan number tracking</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+      <tr>
+        <td>DMCA protection</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+
+      <tr class="cat"><td colspan="5">📣 Promotion</td></tr>
+      <tr>
+        <td>Monthly boost budget</td>
+        <td class="val">$50</td>
+        <td class="val">$100</td>
+        <td class="val">$250</td>
+        <td class="val">Unlimited</td>
+      </tr>
+      <tr>
+        <td>Boost tiers (Spark / Fire / Inferno)</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+      <tr>
+        <td>Priority discovery ranking</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+      <tr>
+        <td>Scene targeting</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+
+      <tr class="cat"><td colspan="5">📊 Analytics</td></tr>
+      <tr>
+        <td>Velocity score</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+      <tr>
+        <td>Plays / saves / shares</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+      <tr>
+        <td>Revenue breakdown by drop</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+      <tr>
+        <td>Advanced analytics dashboard</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+      <tr>
+        <td>Savings dashboard</td>
+        <td class="no">—</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+
+      <tr class="cat"><td colspan="5">🏷 Badges &amp; Identity</td></tr>
+      <tr>
+        <td>Profile badge</td>
+        <td class="no">—</td>
+        <td class="val">H</td>
+        <td class="val">P</td>
+        <td class="val">L</td>
+      </tr>
+      <tr>
+        <td>Badge on feed drops</td>
+        <td class="no">—</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- Competitor comparison -->
+<div class="section">
+  <h2>vs. the <span>competition</span></h2>
+  <table class="compare vs-table">
+    <thead>
+      <tr>
+        <th>Platform</th>
+        <th>Fee on sales</th>
+        <th>Scarcity drops</th>
+        <th>Fan # tracking</th>
+        <th>Underground focus</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr class="highlight">
+        <td><strong>BLK MRKT Pro</strong></td>
+        <td class="val">3% + Stripe</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+      </tr>
+      <tr>
+        <td>Bandcamp</td>
+        <td class="val">10–15%</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="yes">✓</td>
+      </tr>
+      <tr>
+        <td>SoundCloud Pro</td>
+        <td class="val">No direct sales</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+      </tr>
+      <tr>
+        <td>Audiomack</td>
+        <td class="val">No direct sales</td>
+        <td class="no">—</td>
+        <td class="no">—</td>
+        <td class="yes">partial</td>
+      </tr>
+      <tr>
+        <td>NFT platforms</td>
+        <td class="val">2.5–15%</td>
+        <td class="yes">✓</td>
+        <td class="yes">✓</td>
+        <td class="no">—</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- FAQ -->
+<div class="section">
+  <h2><span>FAQ</span></h2>
+  <div class="faq-list">
+    <details>
+      <summary>When does the new fee rate kick in?</summary>
+      <p>Immediately upon successful payment. Any drop sale processed after your subscription activates uses your new tier's fee rate. There's no waiting period.</p>
+    </details>
+    <details>
+      <summary>What happens if I cancel?</summary>
+      <p>Your tier stays active until the end of the billing period. After that, you automatically revert to the Free tier (15% fee). Your drops, fans, and data are never affected.</p>
+    </details>
+    <details>
+      <summary>Does the Stripe fee change across tiers?</summary>
+      <p>No. Stripe charges 2.9% + 30¢ per transaction regardless of your plan — that's Stripe's standard rate and goes directly to them. The percentages listed in our tier cards are BLK MRKT's platform fee only.</p>
+    </details>
+    <details>
+      <summary>Can I upgrade mid-month?</summary>
+      <p>Yes. The new fee rate applies immediately to all future transactions. You'll be billed the prorated difference on your next invoice.</p>
+    </details>
+    <details>
+      <summary>What's the monthly boost budget?</summary>
+      <p>Each tier includes a monthly cap on how much you can spend on Spark / Fire / Inferno boosts. The cap resets on the 1st of each month. Label tier has no cap.</p>
+    </details>
+    <details>
+      <summary>Is there a free trial?</summary>
+      <p>The Free tier is free forever with unlimited drops. No credit card required. We don't offer trials on paid tiers — the math speaks for itself once you're making sales.</p>
+    </details>
+    <details>
+      <summary>Do fans need to pay anything?</summary>
+      <p>Fans never pay a subscription. They pay the price the artist sets on each drop (or nothing for free drops). The platform fee is only charged when a paid drop is claimed.</p>
+    </details>
+  </div>
+</div>
+
+<footer>
+  &copy; 2025 BLK MRKT &nbsp;·&nbsp;
+  <a href="/terms.html">Terms</a> &nbsp;·&nbsp;
+  <a href="/privacy.html">Privacy</a> &nbsp;·&nbsp;
+  <a href="/">Back to drops</a>
+</footer>
+
+<script>
+  // Handle upgrade buttons — redirect to app with upgrade param
+  document.querySelectorAll('[data-tier]').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      const tier = btn.dataset.tier;
+      // If logged in, trigger upgrade flow; otherwise redirect to register
+      const token = localStorage.getItem('blkmrkt_access_token');
+      if (token) {
+        window.location.href = `/?upgrade=${tier}`;
+      } else {
+        window.location.href = `/?register=1&upgrade=${tier}`;
+      }
+    });
+  });
+</script>
+
+</body>
+</html>

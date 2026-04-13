@@ -67,7 +67,9 @@ def _flatten_params(d, prefix=""):
 def create_checkout_session(drop, user, access_type="stream"):
     """
     Create a Stripe Checkout Session for a drop purchase.
-    If artist has Stripe Connect, routes 85% to them and keeps 15% as platform fee.
+    Platform fee rate is determined by the artist's current subscription tier:
+      Free: 15%  |  Hustler: 8%  |  Pro: 3%  |  Label: 0%
+    If artist has Stripe Connect, routes (100 - fee)% to them.
     """
     if not STRIPE_SECRET_KEY:
         return None, "Stripe not configured"
@@ -77,6 +79,12 @@ def create_checkout_session(drop, user, access_type="stream"):
         else (drop.get("own_price") or drop["access_price"])
     ) * 100)
     drop_title = drop["title"][:80]
+
+    # Dynamic platform fee from artist tier
+    from tiers import get_artist_fee_rate
+    fee_rate = get_artist_fee_rate(drop["artist_id"])
+    platform_fee_cents = int(price_cents * fee_rate)
+    artist_pct = round((1.0 - fee_rate) * 100)
 
     params = {
         "mode": "payment",
@@ -93,16 +101,17 @@ def create_checkout_session(drop, user, access_type="stream"):
         "metadata[user_id]": user["id"],
         "metadata[access_type]": access_type,
         "metadata[price_cents]": str(price_cents),
+        "metadata[platform_fee_cents]": str(platform_fee_cents),
+        "metadata[fee_rate]": str(fee_rate),
         "client_reference_id": user["id"],
     }
 
-    # Stripe Connect split — 15% platform fee → 85% to artist
-    if STRIPE_CONNECT_ENABLED and drop.get("artist_connect_id"):
-        platform_fee = int(price_cents * 0.15)
-        params["payment_intent_data[application_fee_amount]"] = str(platform_fee)
+    # Stripe Connect split — dynamic fee → remainder to artist
+    if STRIPE_CONNECT_ENABLED and drop.get("artist_connect_id") and fee_rate < 1.0:
+        params["payment_intent_data[application_fee_amount]"] = str(platform_fee_cents)
         params["payment_intent_data[transfer_data][destination]"] = drop["artist_connect_id"]
-        params["metadata[platform_fee_cents]"] = str(platform_fee)
         params["metadata[artist_connect_id]"] = drop["artist_connect_id"]
+        params["metadata[artist_pct]"] = str(artist_pct)
 
     result = _stripe_request("POST", "/checkout/sessions", _flatten_params(params))
     if "url" in result:
@@ -268,6 +277,15 @@ def stripe_webhook(req):
         _handle_checkout_completed(obj)
     elif event_type == "payment_intent.payment_failed":
         _handle_payment_failed(obj)
+    # Subscription lifecycle events
+    elif event_type in ("customer.subscription.created", "customer.subscription.updated"):
+        _handle_subscription_changed(obj)
+    elif event_type == "customer.subscription.deleted":
+        _handle_subscription_deleted(obj)
+    elif event_type == "invoice.payment_succeeded":
+        _handle_invoice_succeeded(obj)
+    elif event_type == "invoice.payment_failed":
+        _handle_invoice_failed(obj)
 
     # Always return 200 immediately to Stripe
     return jsonify({"received": True})
@@ -409,6 +427,101 @@ def _activate_boost(meta, session_id, payment_intent):
         conn.commit()
     finally:
         conn.close()
+
+
+def _handle_subscription_changed(sub):
+    """Sync artist tier when subscription is created or updated."""
+    user_id = sub.get("metadata", {}).get("user_id")
+    if not user_id:
+        # Try to look up via customer ID
+        customer_id = sub.get("customer")
+        if customer_id:
+            row = None
+            conn = get_db()
+            try:
+                row = conn.execute(
+                    "SELECT id FROM users WHERE stripe_customer_id = ?", (customer_id,)
+                ).fetchone()
+            finally:
+                conn.close()
+            if row:
+                user_id = row["id"]
+    if not user_id:
+        return
+
+    from tiers import apply_tier_from_stripe
+    apply_tier_from_stripe(user_id, sub)
+
+
+def _handle_subscription_deleted(sub):
+    """Downgrade artist to free when subscription is deleted."""
+    user_id = sub.get("metadata", {}).get("user_id")
+    if not user_id:
+        customer_id = sub.get("customer")
+        if customer_id:
+            conn = get_db()
+            try:
+                row = conn.execute(
+                    "SELECT id FROM users WHERE stripe_customer_id = ?", (customer_id,)
+                ).fetchone()
+                if row:
+                    user_id = row["id"]
+            finally:
+                conn.close()
+    if not user_id:
+        return
+
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE users SET tier = 'free', tier_expires_at = NULL, stripe_subscription_id = NULL WHERE id = ?",
+            (user_id,)
+        )
+        conn.execute(
+            """INSERT INTO subscription_history (id, user_id, tier, action, stripe_subscription_id, amount_cents)
+               VALUES (?, ?, 'free', 'expired', ?, 0)""",
+            (new_id(), user_id, sub.get("id", ""))
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _handle_invoice_succeeded(invoice):
+    """Log a successful subscription payment."""
+    sub_id = invoice.get("subscription")
+    customer_id = invoice.get("customer")
+    amount_paid = invoice.get("amount_paid", 0)
+
+    if not sub_id:
+        return
+
+    conn = get_db()
+    try:
+        user = row_to_dict(conn.execute(
+            "SELECT id, tier FROM users WHERE stripe_customer_id = ? OR stripe_subscription_id = ?",
+            (customer_id or "", sub_id or "")
+        ).fetchone())
+        if not user:
+            return
+
+        # Record as subscription transaction
+        conn.execute(
+            """INSERT INTO transactions (id, user_id, drop_id, amount_cents, stripe_session_id,
+               type, status, metadata)
+               VALUES (?, ?, NULL, ?, ?, 'subscription', 'completed', ?)""",
+            (new_id(), user["id"], amount_paid, invoice.get("id", ""),
+             json.dumps({"subscription_id": sub_id, "tier": user.get("tier", "free")}))
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _handle_invoice_failed(invoice):
+    """Handle failed subscription invoice — could downgrade after grace period."""
+    # Log it; actual downgrade happens via subscription.updated (status → past_due/canceled)
+    pass
 
 
 def _handle_payment_failed(payment_intent_obj):

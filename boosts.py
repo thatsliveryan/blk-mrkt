@@ -171,6 +171,32 @@ def create_boost(req):
                 "required": BOOST_MIN_VELOCITY,
             }, 402), 402
 
+        # Monthly boost cap check
+        from tiers import get_boost_monthly_spent, get_tier_limits
+        tiers = get_tier_limits(conn)
+        artist_row = conn.execute(
+            "SELECT tier FROM users WHERE id = ?", (srv.g.user_id,)
+        ).fetchone()
+        artist_tier = (artist_row["tier"] if artist_row else None) or "free"
+        tier_info = tiers.get(artist_tier, {})
+        cap_cents = tier_info.get("monthly_boost_cap_cents")
+
+        if cap_cents is not None and srv.g.user_role != "admin":
+            spent = get_boost_monthly_spent(srv.g.user_id, conn)
+            remaining = cap_cents - spent
+            if budget_cents > remaining:
+                return jsonify({
+                    "error": "BOOST_CAP_REACHED",
+                    "message": (
+                        f"You've used ${spent / 100:.2f} of your ${cap_cents / 100:.2f}/mo boost budget. "
+                        f"${remaining / 100:.2f} remaining this month. Upgrade your plan for more."
+                    ),
+                    "spent_cents": spent,
+                    "cap_cents": cap_cents,
+                    "remaining_cents": max(0, remaining),
+                    "tier": artist_tier,
+                }, 402), 402
+
         # Block duplicate active boost
         existing = row_to_dict(conn.execute(
             "SELECT id FROM boosts WHERE drop_id = ? AND status = 'active'", (drop_id,)

@@ -108,6 +108,12 @@ function nav(view, data = {}) {
   state.view = view;
   state.viewData = data;
   render();
+  // Show email verification banner for unverified users on non-auth views
+  if (view !== 'auth') {
+    setTimeout(() => {
+      if (state.user && !state.user.email_verified) showVerifyBanner();
+    }, 500);
+  }
 }
 
 // ============================================================
@@ -2576,19 +2582,7 @@ const _origRenderAuth = renderAuth;
 window.renderAuth = renderAuth;
 
 // After render, inject ToS + forgot password
-const _origNav = nav;
-function nav(view, data = {}) {
-  state.view = view;
-  state.viewData = data;
-  render();
-  if (view !== 'auth') {
-    // Show email verification banner for unverified users
-    setTimeout(() => {
-      if (state.user && !state.user.email_verified) showVerifyBanner();
-    }, 500);
-  }
-}
-window.nav = nav;
+// (nav is already patched at declaration to handle verify banner)
 
 // Patch handleAuth to add ToS validation and onboarding trigger
 const _origHandleAuth = window.handleAuth;
@@ -2767,4 +2761,222 @@ function injectFooter() {
 }
 document.addEventListener('DOMContentLoaded', injectFooter);
 if (document.readyState !== 'loading') injectFooter();
+
+
+
+// ============================================================
+// TIER SYSTEM — Badges, Upgrade Banner, Savings Dashboard
+// ============================================================
+
+// Tier badge HTML for a user object
+function tierBadge(user) {
+  const tier = user?.tier || 'free';
+  if (tier === 'free') return '';
+  const map = {
+    hustler: { label: 'H', color: '#6c1b8c', title: 'Hustler Plan' },
+    pro:     { label: 'P', color: '#1a6b8c', title: 'Pro Plan' },
+    label:   { label: 'L', color: '#1a5c1a', title: 'Label Plan' },
+  };
+  const t = map[tier];
+  if (!t) return '';
+  return `<span class="tier-badge tier-${tier}" title="${t.title}" style="
+    display:inline-flex;align-items:center;justify-content:center;
+    width:18px;height:18px;border-radius:50%;
+    background:${t.color};color:#fff;
+    font-size:10px;font-weight:800;letter-spacing:0;
+    vertical-align:middle;margin-left:4px;flex-shrink:0;
+  ">${t.label}</span>`;
+}
+
+// Savings banner shown on artist dashboard when on Free tier
+async function loadTierBanner() {
+  const el = document.getElementById('tier-upgrade-banner');
+  if (!el) return;
+  if (!state.user || state.user.role !== 'artist') { el.remove(); return; }
+
+  try {
+    const data = await API.json('/tiers/savings');
+    const tier = data.current_tier || 'free';
+    if (tier !== 'free') { el.remove(); return; } // Already on paid tier
+
+    const gross = data.gross_30d || 0;
+    if (gross < 10) {
+      // Not enough sales yet — show a lighter nudge
+      el.innerHTML = `
+        <div class="tier-nudge" style="
+          background:#141414;border:1px solid #222;border-radius:10px;
+          padding:1rem 1.25rem;margin-bottom:1.25rem;
+          display:flex;justify-content:space-between;align-items:center;gap:1rem;
+        ">
+          <div>
+            <div style="font-size:.8rem;color:#888;margin-bottom:.2rem;">FREE PLAN · 15% FEE</div>
+            <div style="font-size:.85rem;color:#ccc;">Start earning to see how much you could save by upgrading.</div>
+          </div>
+          <a href="/pricing.html" style="white-space:nowrap;color:#e63946;font-size:.8rem;font-weight:600;text-decoration:none;">View Plans →</a>
+        </div>`;
+      return;
+    }
+
+    // Find the recommended tier
+    const rec = (data.breakdown || []).find(b => b.recommended);
+    if (!rec || rec.annual_savings_vs_free_cents <= 0) { el.remove(); return; }
+
+    const savingsPerYear = rec.annual_savings_vs_free;
+    const savingsPerMonth = (rec.annual_savings_vs_free_cents / 12 / 100).toFixed(2);
+    const tierLabel = rec.label;
+    const tierKey = rec.tier;
+    const monthlyPrice = (rec.monthly_price_cents / 100).toFixed(0);
+    const feePct = Math.round(rec.fee_pct * 100);
+
+    el.innerHTML = `
+      <div class="tier-upgrade-card" style="
+        background:linear-gradient(135deg,rgba(230,57,70,.08),rgba(0,0,0,0));
+        border:1px solid rgba(230,57,70,.3);border-radius:10px;
+        padding:1.25rem 1.5rem;margin-bottom:1.25rem;
+        display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;
+      ">
+        <div>
+          <div style="font-size:.7rem;font-weight:800;letter-spacing:.1em;color:#e63946;margin-bottom:.3rem;">
+            💰 UPGRADE TO KEEP MORE
+          </div>
+          <div style="font-size:1rem;font-weight:700;color:#f0f0f0;margin-bottom:.2rem;">
+            ${tierLabel} plan saves you ~$${savingsPerMonth}/mo
+          </div>
+          <div style="font-size:.82rem;color:#888;">
+            $${monthlyPrice}/mo · ${feePct}% fee · ~$${savingsPerYear}/yr savings at your current volume
+          </div>
+        </div>
+        <div style="display:flex;gap:.75rem;flex-shrink:0;">
+          <a href="/pricing.html" style="
+            background:transparent;border:1px solid #e63946;color:#e63946;
+            padding:.5rem .9rem;border-radius:7px;font-size:.8rem;font-weight:700;text-decoration:none;
+          ">See breakdown</a>
+          <button onclick="triggerTierUpgrade('${tierKey}')" style="
+            background:#e63946;color:#fff;border:none;
+            padding:.5rem .9rem;border-radius:7px;font-size:.8rem;font-weight:700;cursor:pointer;
+          ">Upgrade $${monthlyPrice}/mo</button>
+        </div>
+      </div>`;
+  } catch (e) {
+    el.remove();
+  }
+}
+
+async function triggerTierUpgrade(tier) {
+  if (!state.user) { nav('auth'); return; }
+  try {
+    toast('Opening checkout...', 'info');
+    const data = await API.json('/tiers/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ tier }),
+    });
+    if (data.dev_mode) {
+      // Dev mode — tier applied immediately
+      state.user.tier = data.tier;
+      saveAuth();
+      toast(`✓ Tier set to ${data.tier} (dev mode)`, 'success');
+      nav('artist-dashboard');
+      return;
+    }
+    if (data.checkout_url) {
+      window.location.href = data.checkout_url;
+    }
+  } catch (err) {
+    toast(err.error || 'Could not open checkout', 'error');
+  }
+}
+
+// ---- Patch renderArtistDashboard to inject tier banner slot ----
+{
+  const _orig = renderArtistDashboard;
+  renderArtistDashboard = function() {
+    const html = _orig();
+    return html.replace(
+      '<div class="stats-grid" id="a-stats">',
+      `<div id="tier-upgrade-banner"></div><div class="stats-grid" id="a-stats">`
+    );
+  };
+}
+
+// ---- Patch loadArtistDashboard to load tier banner after stats ----
+{
+  const _orig = loadArtistDashboard;
+  loadArtistDashboard = async function() {
+    await _orig();
+    loadTierBanner();
+  };
+}
+
+// ---- Patch openDrop to inject tier badge on artist name ----
+{
+  const _orig = openDrop;
+  openDrop = async function(id) {
+    await _orig(id);
+    setTimeout(() => {
+      const artistEl = document.querySelector('.drop-artist');
+      if (artistEl && state.currentDrop?.artist_tier) {
+        const badge = tierBadge({ tier: state.currentDrop.artist_tier });
+        if (badge && !artistEl.querySelector('.tier-badge')) {
+          artistEl.insertAdjacentHTML('beforeend', badge);
+        }
+      }
+    }, 200);
+  };
+}
+
+// ---- Handle tier_success param from Stripe redirect ----
+(function handleTierURLParams() {
+  const params = new URLSearchParams(window.location.search);
+
+  const tierSuccess = params.get('tier_success');
+  const upgradedTier = params.get('tier');
+  if (tierSuccess === '1' && upgradedTier) {
+    history.replaceState({}, '', '/');
+    toast(`🎉 You're now on the ${upgradedTier} plan! New fee rate active immediately.`, 'success');
+    // Refresh user data
+    API.json('/auth/me').then(data => {
+      if (data.user) {
+        state.user = { ...state.user, ...data.user };
+        saveAuth();
+      }
+    }).catch(() => {});
+  }
+
+  const tierCancelled = params.get('tier_cancelled');
+  if (tierCancelled === '1') {
+    history.replaceState({}, '', '/');
+    toast('Upgrade cancelled.', 'info');
+  }
+
+  // Handle upgrade=<tier> param (from pricing page buttons)
+  const upgradeTo = params.get('upgrade');
+  if (upgradeTo && ['hustler', 'pro', 'label'].includes(upgradeTo)) {
+    history.replaceState({}, '', '/');
+    if (state.user && state.user.role === 'artist') {
+      setTimeout(() => triggerTierUpgrade(upgradeTo), 500);
+    } else if (!state.user) {
+      setTimeout(() => nav('auth'), 100);
+    }
+  }
+})();
+
+// ---- Add Pricing link to nav / settings ----
+(function injectPricingLink() {
+  function tryInject() {
+    // Try to add "Pricing" link to the global footer
+    const footer = document.getElementById('global-footer');
+    if (footer && !footer.querySelector('.pricing-link')) {
+      const link = document.createElement('a');
+      link.href = '/pricing.html';
+      link.className = 'pricing-link';
+      link.textContent = 'Pricing';
+      link.style.cssText = 'color:#333;font-size:.7rem;text-decoration:none;pointer-events:all;transition:color .2s;';
+      link.onmouseover = () => link.style.color = '#888';
+      link.onmouseout  = () => link.style.color = '#333';
+      footer.appendChild(link);
+    }
+  }
+  document.addEventListener('DOMContentLoaded', tryInject);
+  setTimeout(tryInject, 800);
+})();
 

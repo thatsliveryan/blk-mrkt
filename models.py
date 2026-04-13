@@ -187,6 +187,27 @@ CREATE TABLE IF NOT EXISTS password_resets (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
+CREATE TABLE IF NOT EXISTS tier_limits (
+    tier TEXT PRIMARY KEY,
+    monthly_price_cents INTEGER NOT NULL DEFAULT 0,
+    platform_fee_pct REAL NOT NULL DEFAULT 0.15,
+    monthly_boost_cap_cents INTEGER,
+    stripe_price_id TEXT,
+    label TEXT NOT NULL,
+    description TEXT DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS subscription_history (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    tier TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN ('subscribe', 'upgrade', 'downgrade', 'cancel', 'reactivate', 'expired')),
+    stripe_subscription_id TEXT,
+    stripe_invoice_id TEXT,
+    amount_cents INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_transactions_user ON transactions(user_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_drop ON transactions(drop_id);
 CREATE INDEX IF NOT EXISTS idx_transactions_stripe ON transactions(stripe_session_id);
@@ -205,6 +226,7 @@ CREATE INDEX IF NOT EXISTS idx_drop_engagement_user ON drop_engagement(user_id);
 CREATE INDEX IF NOT EXISTS idx_dmca_drop ON dmca_reports(drop_id);
 CREATE INDEX IF NOT EXISTS idx_email_verif_user ON email_verifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_password_resets_user ON password_resets(user_id);
+CREATE INDEX IF NOT EXISTS idx_sub_history_user ON subscription_history(user_id);
 """
 
 
@@ -251,6 +273,11 @@ def init_db():
         "ALTER TABLE transactions ADD COLUMN refunded_at TEXT",
         "ALTER TABLE transactions ADD COLUMN refund_reason TEXT",
         "ALTER TABLE transactions ADD COLUMN stripe_connect_id TEXT",
+        # Phase 4 (Revenue Model) migrations
+        "ALTER TABLE users ADD COLUMN tier TEXT NOT NULL DEFAULT 'free'",
+        "ALTER TABLE users ADD COLUMN tier_expires_at TEXT",
+        "ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT",
+        "ALTER TABLE users ADD COLUMN billing_cycle TEXT DEFAULT 'monthly'",
     ]
     for sql in migrations:
         try:
@@ -258,6 +285,22 @@ def init_db():
         except Exception:
             pass  # Column already exists
 
+    conn.commit()
+
+    # Seed tier_limits (idempotent — INSERT OR IGNORE)
+    tier_rows = [
+        ("free",    0,      0.15, 5000,   None, "Free",    "15% platform fee. Good for getting started."),
+        ("hustler", 900,    0.08, 10000,  None, "Hustler", "8% fee + $100/mo boost budget. Drop more, keep more."),
+        ("pro",     2900,   0.03, 25000,  None, "Pro",     "3% fee + $250/mo boost budget. Serious artists only."),
+        ("label",   9900,   0.00, None,   None, "Label",   "0% fee + unlimited boosts. Run your operation."),
+    ]
+    for row in tier_rows:
+        conn.execute(
+            """INSERT OR IGNORE INTO tier_limits
+               (tier, monthly_price_cents, platform_fee_pct, monthly_boost_cap_cents, stripe_price_id, label, description)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            row,
+        )
     conn.commit()
     conn.close()
 
