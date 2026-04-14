@@ -2851,7 +2851,7 @@ async function loadTierBanner() {
             background:transparent;border:1px solid #e63946;color:#e63946;
             padding:.5rem .9rem;border-radius:7px;font-size:.8rem;font-weight:700;text-decoration:none;
           ">See breakdown</a>
-          <button onclick="triggerTierUpgrade('${tierKey}')" style="
+          <button onclick="triggerTierUpgrade('${tierKey}', 'monthly')" style="
             background:#e63946;color:#fff;border:none;
             padding:.5rem .9rem;border-radius:7px;font-size:.8rem;font-weight:700;cursor:pointer;
           ">Upgrade $${monthlyPrice}/mo</button>
@@ -2862,19 +2862,21 @@ async function loadTierBanner() {
   }
 }
 
-async function triggerTierUpgrade(tier) {
+async function triggerTierUpgrade(tier, billingPeriod = 'monthly') {
   if (!state.user) { nav('auth'); return; }
+  const periodLabel = billingPeriod === 'annual' ? '/yr (2 months free)' : '/mo';
   try {
     toast('Opening checkout...', 'info');
     const data = await API.json('/tiers/checkout', {
       method: 'POST',
-      body: JSON.stringify({ tier }),
+      body: JSON.stringify({ tier, billing_period: billingPeriod }),
     });
     if (data.dev_mode) {
       // Dev mode — tier applied immediately
       state.user.tier = data.tier;
+      state.user.billing_cycle = billingPeriod;
       saveAuth();
-      toast(`✓ Tier set to ${data.tier} (dev mode)`, 'success');
+      toast(`✓ ${data.tier} plan active (${billingPeriod}, dev mode)`, 'success');
       nav('artist-dashboard');
       return;
     }
@@ -2930,9 +2932,11 @@ async function triggerTierUpgrade(tier) {
 
   const tierSuccess = params.get('tier_success');
   const upgradedTier = params.get('tier');
+  const upgradedBilling = params.get('billing') || 'monthly';
   if (tierSuccess === '1' && upgradedTier) {
     history.replaceState({}, '', '/');
-    toast(`🎉 You're now on the ${upgradedTier} plan! New fee rate active immediately.`, 'success');
+    const billingLabel = upgradedBilling === 'annual' ? 'annual billing — 2 months free!' : 'monthly billing.';
+    toast(`🎉 You're now on the ${upgradedTier} plan (${billingLabel}) New fee rate active immediately.`, 'success');
     // Refresh user data
     API.json('/auth/me').then(data => {
       if (data.user) {
@@ -2948,12 +2952,13 @@ async function triggerTierUpgrade(tier) {
     toast('Upgrade cancelled.', 'info');
   }
 
-  // Handle upgrade=<tier> param (from pricing page buttons)
+  // Handle upgrade=<tier>&billing=<period> params (from pricing page buttons)
   const upgradeTo = params.get('upgrade');
+  const billingParam = params.get('billing') === 'annual' ? 'annual' : 'monthly';
   if (upgradeTo && ['hustler', 'pro', 'label'].includes(upgradeTo)) {
     history.replaceState({}, '', '/');
     if (state.user && state.user.role === 'artist') {
-      setTimeout(() => triggerTierUpgrade(upgradeTo), 500);
+      setTimeout(() => triggerTierUpgrade(upgradeTo, billingParam), 500);
     } else if (!state.user) {
       setTimeout(() => nav('auth'), 100);
     }

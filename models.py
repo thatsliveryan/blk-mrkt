@@ -190,9 +190,11 @@ CREATE TABLE IF NOT EXISTS password_resets (
 CREATE TABLE IF NOT EXISTS tier_limits (
     tier TEXT PRIMARY KEY,
     monthly_price_cents INTEGER NOT NULL DEFAULT 0,
+    annual_price_cents INTEGER NOT NULL DEFAULT 0,
     platform_fee_pct REAL NOT NULL DEFAULT 0.15,
     monthly_boost_cap_cents INTEGER,
     stripe_price_id TEXT,
+    stripe_annual_price_id TEXT,
     label TEXT NOT NULL,
     description TEXT DEFAULT ''
 );
@@ -278,6 +280,9 @@ def init_db():
         "ALTER TABLE users ADD COLUMN tier_expires_at TEXT",
         "ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT",
         "ALTER TABLE users ADD COLUMN billing_cycle TEXT DEFAULT 'monthly'",
+        # Phase 4b (Billing Period) migrations
+        "ALTER TABLE tier_limits ADD COLUMN annual_price_cents INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE tier_limits ADD COLUMN stripe_annual_price_id TEXT",
     ]
     for sql in migrations:
         try:
@@ -287,19 +292,35 @@ def init_db():
 
     conn.commit()
 
-    # Seed tier_limits (idempotent — INSERT OR IGNORE)
+    # Seed tier_limits (idempotent — insert new rows, then update non-Stripe fields so
+    # any existing stripe_price_id / stripe_annual_price_id are preserved on upgrades).
+    #
+    # Annual pricing = 10 months for price of 12 (2 months free, ~17% discount):
+    #   Hustler: $9 × 10 = $90/yr  |  Pro: $29 × 10 = $290/yr  |  Label: $99 × 10 = $990/yr
+    # Label fee changed from 0% to 1% — labels still get the best rate but platform stays funded.
     tier_rows = [
-        ("free",    0,      0.15, 5000,   None, "Free",    "15% platform fee. Good for getting started."),
-        ("hustler", 900,    0.08, 10000,  None, "Hustler", "8% fee + $100/mo boost budget. Drop more, keep more."),
-        ("pro",     2900,   0.03, 25000,  None, "Pro",     "3% fee + $250/mo boost budget. Serious artists only."),
-        ("label",   9900,   0.00, None,   None, "Label",   "0% fee + unlimited boosts. Run your operation."),
+        # tier      monthly  annual  fee   boost_cap  label      description
+        ("free",    0,       0,      0.15, 5000,      "Free",    "15% platform fee. Good for getting started."),
+        ("hustler", 900,     9000,   0.08, 10000,     "Hustler", "8% fee + $100/mo boost budget. Drop more, keep more."),
+        ("pro",     2900,    29000,  0.03, 25000,     "Pro",     "3% fee + $250/mo boost budget. Serious artists only."),
+        ("label",   9900,    99000,  0.01, None,      "Label",   "1% fee + unlimited boosts. Run your operation."),
     ]
-    for row in tier_rows:
+    for (tier, monthly, annual, fee, boost_cap, label, desc) in tier_rows:
+        # Insert if not present (leaves Stripe IDs as NULL for new rows)
         conn.execute(
             """INSERT OR IGNORE INTO tier_limits
-               (tier, monthly_price_cents, platform_fee_pct, monthly_boost_cap_cents, stripe_price_id, label, description)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            row,
+               (tier, monthly_price_cents, annual_price_cents, platform_fee_pct,
+                monthly_boost_cap_cents, stripe_price_id, stripe_annual_price_id, label, description)
+               VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)""",
+            (tier, monthly, annual, fee, boost_cap, label, desc),
+        )
+        # Always update non-Stripe fields so changes here take effect on next deploy
+        conn.execute(
+            """UPDATE tier_limits SET
+               monthly_price_cents = ?, annual_price_cents = ?, platform_fee_pct = ?,
+               monthly_boost_cap_cents = ?, label = ?, description = ?
+               WHERE tier = ?""",
+            (monthly, annual, fee, boost_cap, label, desc, tier),
         )
     conn.commit()
     conn.close()

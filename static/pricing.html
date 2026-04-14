@@ -41,8 +41,23 @@
 
     /* ---- Toggle ---- */
     .toggle-row { display: flex; justify-content: center; align-items: center; gap: 1rem; margin: 2.5rem 0 1.5rem; }
-    .toggle-row span { color: var(--muted); font-size: .9rem; }
-    .toggle-row .badge { background: var(--green); color: #000; font-size: .7rem; font-weight: 700; padding: .15rem .45rem; border-radius: 20px; margin-left: .3rem; }
+    .toggle-row span { color: var(--muted); font-size: .9rem; font-weight: 600; transition: color .2s; }
+    .toggle-row span.active { color: var(--text); }
+    .toggle-row .badge { background: var(--green); color: #000; font-size: .7rem; font-weight: 700; padding: .15rem .45rem; border-radius: 20px; margin-left: .4rem; white-space: nowrap; }
+
+    /* pill toggle */
+    .billing-toggle {
+      position: relative; display: inline-flex; align-items: center;
+      background: var(--surface2); border: 1px solid var(--border2);
+      border-radius: 30px; padding: 3px; cursor: pointer; width: 52px; height: 28px;
+    }
+    .billing-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .billing-toggle .knob {
+      position: absolute; left: 3px; top: 3px;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: var(--muted); transition: transform .25s, background .25s;
+    }
+    .billing-toggle input:checked ~ .knob { transform: translateX(24px); background: var(--green); }
 
     /* ---- Tier Grid ---- */
     .tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1.5rem; max-width: 1080px; margin: 0 auto; padding: 0 2rem 3rem; }
@@ -166,7 +181,17 @@
 <!-- Hero -->
 <div class="hero">
   <h1>Keep more of what<br>you <span>actually earn</span></h1>
-  <p>Our fee drops as you grow. Artists on Pro keep 97 cents of every dollar. Label tier keeps 100%.</p>
+  <p>Our fee drops as you grow. Artists on Pro keep 97 cents of every dollar. Labels keep 99%.</p>
+</div>
+
+<!-- Billing toggle -->
+<div class="toggle-row">
+  <span id="lbl-monthly" class="active">Monthly</span>
+  <label class="billing-toggle" title="Switch to annual billing">
+    <input type="checkbox" id="billing-toggle" />
+    <span class="knob"></span>
+  </label>
+  <span id="lbl-annual">Annual <span class="badge">2 MONTHS FREE</span></span>
 </div>
 
 <!-- Tier cards -->
@@ -193,7 +218,10 @@
   <!-- Hustler -->
   <div class="tier-card">
     <div class="tier-name">Hustler</div>
-    <div class="tier-price">$9 <span class="period">/mo</span></div>
+    <div class="tier-price">
+      <span class="price-monthly">$9 <span class="period">/mo</span></span>
+      <span class="price-annual" style="display:none">$90 <span class="period">/yr</span> <span style="font-size:.75rem;color:var(--green);font-weight:600;">$7.50/mo</span></span>
+    </div>
     <div class="tier-fee">8% <small>platform fee per sale</small></div>
     <div class="tier-desc">Drop regularly. Keep almost double.</div>
     <ul class="tier-features">
@@ -211,7 +239,10 @@
   <!-- Pro -->
   <div class="tier-card featured">
     <div class="tier-name">Pro</div>
-    <div class="tier-price">$29 <span class="period">/mo</span></div>
+    <div class="tier-price">
+      <span class="price-monthly">$29 <span class="period">/mo</span></span>
+      <span class="price-annual" style="display:none">$290 <span class="period">/yr</span> <span style="font-size:.75rem;color:var(--green);font-weight:600;">$24/mo</span></span>
+    </div>
     <div class="tier-fee">3% <small>platform fee per sale</small></div>
     <div class="tier-desc">Serious artists. Near-zero platform cut.</div>
     <ul class="tier-features">
@@ -229,12 +260,15 @@
   <!-- Label -->
   <div class="tier-card">
     <div class="tier-name">Label</div>
-    <div class="tier-price">$99 <span class="period">/mo</span></div>
-    <div class="tier-fee">0% <small>platform fee — keep everything</small></div>
-    <div class="tier-desc">Run a label operation. Zero cuts.</div>
+    <div class="tier-price">
+      <span class="price-monthly">$99 <span class="period">/mo</span></span>
+      <span class="price-annual" style="display:none">$990 <span class="period">/yr</span> <span style="font-size:.75rem;color:var(--green);font-weight:600;">$82.50/mo</span></span>
+    </div>
+    <div class="tier-fee">1% <small>platform fee — keep 99%</small></div>
+    <div class="tier-desc">Run a label operation. Industry-low cut.</div>
     <ul class="tier-features">
       <li><span class="check">✓</span> Everything in Pro</li>
-      <li><span class="check">✓</span> Zero platform fee</li>
+      <li><span class="check">✓</span> 1% fee (industry lowest)</li>
       <li><span class="check">✓</span> Unlimited boost budget</li>
       <li><span class="check">✓</span> Multi-artist management</li>
       <li><span class="check">✓</span> Label badge + verified status</li>
@@ -260,24 +294,24 @@
     <h3>If you earn <span>$500/mo</span> in drop sales:</h3>
     <div class="math-row">
       <span class="label">Free (15% fee)</span>
-      <span class="val">You keep $425/mo — pay $0/mo sub</span>
+      <span class="val">You keep $425/mo — $0 sub</span>
     </div>
     <div class="math-row">
       <span class="label">Hustler (8% fee + $9/mo)</span>
       <span class="val">You keep $451/mo — save $26/mo vs Free</span>
     </div>
-    <div class="math-row">
-      <span class="label">Pro (3% fee + $29/mo)</span>
-      <span class="val">You keep $456/mo — save $31/mo vs Free</span>
-    </div>
     <div class="math-row savings">
-      <span class="label">Label (0% fee + $99/mo)</span>
-      <span class="val">You keep $401/mo ← Free is better at this volume</span>
+      <span class="label">Pro (3% fee + $29/mo)</span>
+      <span class="val">You keep $456/mo — save $31/mo vs Free ✓ best value here</span>
+    </div>
+    <div class="math-row">
+      <span class="label">Label (1% fee + $99/mo)</span>
+      <span class="val">You keep $396/mo — Free is better at this volume</span>
     </div>
     <p style="font-size:.8rem;color:var(--muted);margin-top:1rem;">
-      * Stripe's 2.9% + 30¢/transaction fee is excluded from this example for simplicity.
-      The savings shown are BLK MRKT platform fees only.
-      Pro makes sense at ~$215+/mo. Label pays off above ~$660+/mo in drop sales.
+      * Stripe's 2.9% + 30¢/transaction not included.
+      Pro breaks even at ~$215+/mo. Label pays off above ~$700+/mo in monthly drop sales.
+      On annual billing, Label saves an extra $198/yr over monthly.
     </p>
   </div>
 </div>
@@ -302,7 +336,7 @@
         <td class="val">15%</td>
         <td class="val">8%</td>
         <td class="val">3%</td>
-        <td class="val">0%</td>
+        <td class="val">1%</td>
       </tr>
       <tr>
         <td>Stripe processing fee</td>
@@ -314,9 +348,9 @@
       <tr>
         <td>Monthly subscription</td>
         <td class="val">$0</td>
-        <td class="val">$9</td>
-        <td class="val">$29</td>
-        <td class="val">$99</td>
+        <td class="val">$9/mo · $90/yr</td>
+        <td class="val">$29/mo · $290/yr</td>
+        <td class="val">$99/mo · $990/yr</td>
       </tr>
       <tr>
         <td>Stripe Connect payouts</td>
@@ -465,7 +499,7 @@
     <tbody>
       <tr class="highlight">
         <td><strong>BLK MRKT Pro</strong></td>
-        <td class="val">3% + Stripe</td>
+        <td class="val">3% + Stripe (1% Label)</td>
         <td class="yes">✓</td>
         <td class="yes">✓</td>
         <td class="yes">✓</td>
@@ -545,19 +579,48 @@
 </footer>
 
 <script>
-  // Handle upgrade buttons — redirect to app with upgrade param
+  // ---- Billing toggle ----
+  const toggle = document.getElementById('billing-toggle');
+  const lblMonthly = document.getElementById('lbl-monthly');
+  const lblAnnual  = document.getElementById('lbl-annual');
+
+  function updateBillingUI(isAnnual) {
+    document.querySelectorAll('.price-monthly').forEach(el => el.style.display = isAnnual ? 'none' : '');
+    document.querySelectorAll('.price-annual').forEach(el => el.style.display  = isAnnual ? '' : 'none');
+    lblMonthly.classList.toggle('active', !isAnnual);
+    lblAnnual.classList.toggle('active', isAnnual);
+
+    // Update button labels
+    document.querySelectorAll('[data-tier]').forEach(btn => {
+      const tier = btn.dataset.tier;
+      const prices = { hustler: ['$9/mo', '$90/yr'], pro: ['$29/mo', '$290/yr'], label: ['$99/mo', '$990/yr'] };
+      const p = prices[tier];
+      if (p) {
+        const base = btn.textContent.replace(/\$[\d]+\/(mo|yr)/, '');
+        btn.textContent = base.trim() + ' — ' + (isAnnual ? p[1] : p[0]);
+      }
+    });
+  }
+
+  toggle.addEventListener('change', () => updateBillingUI(toggle.checked));
+
+  // ---- Upgrade buttons ----
   document.querySelectorAll('[data-tier]').forEach(btn => {
     btn.addEventListener('click', e => {
       e.preventDefault();
       const tier = btn.dataset.tier;
-      // If logged in, trigger upgrade flow; otherwise redirect to register
+      const billing = toggle.checked ? 'annual' : 'monthly';
       const token = localStorage.getItem('blkmrkt_access_token');
       if (token) {
-        window.location.href = `/?upgrade=${tier}`;
+        window.location.href = `/?upgrade=${tier}&billing=${billing}`;
       } else {
-        window.location.href = `/?register=1&upgrade=${tier}`;
+        window.location.href = `/?register=1&upgrade=${tier}&billing=${billing}`;
       }
     });
+    // Set initial label
+    const tier = btn.dataset.tier;
+    const prices = { hustler: '$9/mo', pro: '$29/mo', label: '$99/mo' };
+    if (prices[tier]) btn.textContent += ' — ' + prices[tier];
   });
 </script>
 

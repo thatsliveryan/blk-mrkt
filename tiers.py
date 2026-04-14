@@ -2,10 +2,12 @@
 BLK MRKT — Artist Tier / Subscription System (Revenue Stream 2)
 
 Four tiers that reduce the platform fee on drop sales:
-  Free     — 15% fee, $0/mo,   $50/mo boost cap
-  Hustler  —  8% fee, $9/mo,  $100/mo boost cap
-  Pro      —  3% fee, $29/mo, $250/mo boost cap
-  Label    —  0% fee, $99/mo, unlimited boosts
+  Free     — 15% fee, $0/mo,          $50/mo boost cap
+  Hustler  —  8% fee, $9/mo  |  $90/yr,  $100/mo boost cap
+  Pro      —  3% fee, $29/mo | $290/yr,  $250/mo boost cap
+  Label    —  1% fee, $99/mo | $990/yr,  unlimited boosts
+
+Annual billing = 10 months for the price of 12 (2 months free).
 
 Endpoints:
   GET  /api/tiers               — public: all tier definitions
@@ -151,15 +153,26 @@ def _ensure_stripe_customer(user, conn):
     return None
 
 
-def _get_or_create_stripe_price(tier_row):
-    """Get Stripe price ID for a tier, creating product/price if needed."""
+def _get_or_create_stripe_price(tier_row, billing_period="monthly"):
+    """
+    Get (or create) Stripe price ID for a tier and billing period.
+    billing_period: "monthly" | "annual"
+    """
     if not STRIPE_SECRET_KEY:
         return None
 
-    if tier_row.get("stripe_price_id"):
-        return tier_row["stripe_price_id"]
+    id_field = "stripe_annual_price_id" if billing_period == "annual" else "stripe_price_id"
+    if tier_row.get(id_field):
+        return tier_row[id_field]
 
-    # Create product
+    amount_cents = (
+        tier_row["annual_price_cents"] if billing_period == "annual"
+        else tier_row["monthly_price_cents"]
+    )
+    if not amount_cents:
+        return None
+
+    # Create product (or reuse existing one by looking up by metadata)
     product = _stripe_request("POST", "/products", {
         "name": f"BLK MRKT {tier_row['label']} Plan",
         "description": tier_row.get("description", ""),
@@ -168,24 +181,26 @@ def _get_or_create_stripe_price(tier_row):
     if "error" in product:
         return None
 
-    # Create recurring price
+    # Create recurring price for the requested interval
+    interval = "year" if billing_period == "annual" else "month"
     price = _stripe_request("POST", "/prices", {
         "product": product["id"],
-        "unit_amount": str(tier_row["monthly_price_cents"]),
+        "unit_amount": str(amount_cents),
         "currency": "usd",
-        "recurring[interval]": "month",
+        "recurring[interval]": interval,
         "metadata[tier]": tier_row["tier"],
+        "metadata[billing_period]": billing_period,
     })
     if "error" in price:
         return None
 
     price_id = price["id"]
 
-    # Persist it so we don't recreate
+    # Persist so we don't recreate next time
     conn = get_db()
     try:
         conn.execute(
-            "UPDATE tier_limits SET stripe_price_id = ? WHERE tier = ?",
+            f"UPDATE tier_limits SET {id_field} = ? WHERE tier = ?",
             (price_id, tier_row["tier"])
         )
         conn.commit()
@@ -221,11 +236,14 @@ def apply_tier_from_stripe(user_id, stripe_sub):
 
         old_tier = user.get("tier", "free")
 
+        billing_period = stripe_sub.get("metadata", {}).get("billing_period", "monthly")
+
         if status in ("active", "trialing"):
             conn.execute(
-                """UPDATE users SET tier = ?, tier_expires_at = ?, stripe_subscription_id = ?
+                """UPDATE users SET tier = ?, tier_expires_at = ?,
+                   stripe_subscription_id = ?, billing_cycle = ?
                    WHERE id = ?""",
-                (tier, tier_expires_at, sub_id, user_id)
+                (tier, tier_expires_at, sub_id, billing_period, user_id)
             )
             action = "upgrade" if _tier_rank(tier) > _tier_rank(old_tier) else (
                 "downgrade" if _tier_rank(tier) < _tier_rank(old_tier) else "subscribe"
@@ -333,13 +351,17 @@ def my_tier(req):
 def tier_checkout(req):
     """
     Create a Stripe Checkout Session for a subscription.
-    Body: { "tier": "hustler" | "pro" | "label" }
+    Body: { "tier": "hustler" | "pro" | "label", "billing_period": "monthly" | "annual" }
+    Annual billing = 10 months for price of 12 (2 months free).
     """
     data = req.get_json(silent=True) or {}
     new_tier = (data.get("tier") or "").strip().lower()
+    billing_period = (data.get("billing_period") or "monthly").strip().lower()
 
     if new_tier not in ("hustler", "pro", "label"):
         return jsonify({"error": "tier must be hustler, pro, or label"}, 400), 400
+    if billing_period not in ("monthly", "annual"):
+        return jsonify({"error": "billing_period must be monthly or annual"}, 400), 400
 
     conn = get_db()
     try:
@@ -350,15 +372,17 @@ def tier_checkout(req):
             return jsonify({"error": "User not found"}, 404), 404
 
         current_tier = user.get("tier") or "free"
-        if current_tier == new_tier:
-            return jsonify({"error": f"You're already on the {new_tier} plan"}), 400
+        current_billing = user.get("billing_cycle") or "monthly"
+        if current_tier == new_tier and current_billing == billing_period:
+            return jsonify({"error": f"You're already on the {new_tier} {billing_period} plan"}), 400
 
         if not STRIPE_SECRET_KEY:
             # Dev mode — apply tier immediately without Stripe
-            exp = (datetime.now(timezone.utc) + timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            days = 365 if billing_period == "annual" else 30
+            exp = (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
             conn.execute(
-                "UPDATE users SET tier = ?, tier_expires_at = ? WHERE id = ?",
-                (new_tier, exp, srv.g.user_id)
+                "UPDATE users SET tier = ?, tier_expires_at = ?, billing_cycle = ? WHERE id = ?",
+                (new_tier, exp, billing_period, srv.g.user_id)
             )
             conn.execute(
                 """INSERT INTO subscription_history (id, user_id, tier, action, amount_cents)
@@ -366,11 +390,20 @@ def tier_checkout(req):
                 (new_id(), srv.g.user_id, new_tier)
             )
             conn.commit()
+
+            tiers = get_tier_limits(conn)
+            tier_info = tiers.get(new_tier, {})
+            price_cents = (
+                tier_info.get("annual_price_cents", 0) if billing_period == "annual"
+                else tier_info.get("monthly_price_cents", 0)
+            )
             return jsonify({
                 "dev_mode": True,
                 "tier": new_tier,
-                "message": f"Tier set to {new_tier} (dev mode — no Stripe configured)",
+                "billing_period": billing_period,
+                "message": f"Tier set to {new_tier} ({billing_period}, dev mode — no Stripe configured)",
                 "tier_expires_at": exp,
+                "price_cents": price_cents,
             })
 
         tiers = get_tier_limits(conn)
@@ -378,13 +411,17 @@ def tier_checkout(req):
         if not tier_row:
             return jsonify({"error": "Tier not found"}, 404), 404
 
+        # Validate annual price exists
+        if billing_period == "annual" and not tier_row.get("annual_price_cents"):
+            return jsonify({"error": "Annual pricing not available for this tier"}), 400
+
         # Get/create Stripe customer
         customer_id = _ensure_stripe_customer(user, conn)
         if not customer_id:
             return jsonify({"error": "Could not create Stripe customer"}, 502), 502
 
-        # Get/create Stripe price
-        price_id = _get_or_create_stripe_price(tier_row)
+        # Get/create Stripe price for the requested billing period
+        price_id = _get_or_create_stripe_price(tier_row, billing_period)
         if not price_id:
             return jsonify({"error": "Could not create Stripe price for tier"}, 502), 502
 
@@ -392,6 +429,11 @@ def tier_checkout(req):
         existing_sub = user.get("stripe_subscription_id")
         if existing_sub and current_tier != "free":
             _stripe_request("DELETE", f"/subscriptions/{existing_sub}")
+
+        price_cents = (
+            tier_row["annual_price_cents"] if billing_period == "annual"
+            else tier_row["monthly_price_cents"]
+        )
 
     finally:
         conn.close()
@@ -402,12 +444,14 @@ def tier_checkout(req):
         "customer": customer_id,
         "line_items[0][price]": price_id,
         "line_items[0][quantity]": "1",
-        "success_url": f"{PUBLIC_URL}/?tier_success=1&tier={new_tier}",
+        "success_url": f"{PUBLIC_URL}/?tier_success=1&tier={new_tier}&billing={billing_period}",
         "cancel_url": f"{PUBLIC_URL}/?tier_cancelled=1",
         "metadata[user_id]": srv.g.user_id,
         "metadata[tier]": new_tier,
+        "metadata[billing_period]": billing_period,
         "subscription_data[metadata][user_id]": srv.g.user_id,
         "subscription_data[metadata][tier]": new_tier,
+        "subscription_data[metadata][billing_period]": billing_period,
     }
 
     result = _stripe_request("POST", "/checkout/sessions", params)
@@ -416,7 +460,8 @@ def tier_checkout(req):
         return jsonify({
             "checkout_url": result["url"],
             "tier": new_tier,
-            "price_cents": tier_row["monthly_price_cents"],
+            "billing_period": billing_period,
+            "price_cents": price_cents,
         })
     return jsonify({"error": result.get("error", {}).get("message", "Stripe error")}, 502), 502
 
