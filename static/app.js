@@ -1092,9 +1092,29 @@ async function loadFanProfile() {
 // ============================================================
 function renderArtistDashboard() {
   return pageWrap('DASHBOARD', 'Your artist metrics', `
-    <div class="stats-grid" id="a-stats">
-      ${['Drops','Total Plays','Total Fans','Revenue'].map(l => `<div class="stat-card"><div class="stat-label">${l}</div><div class="stat-value">-</div></div>`).join('')}
+    <div class="kpi-hero-grid" id="a-stats">
+      <div class="kpi-hero-card">
+        <div class="kpi-label">Total Drops</div>
+        <div class="kpi-value" id="kpi-drops">—</div>
+        <div class="kpi-sub">releases</div>
+      </div>
+      <div class="kpi-hero-card kpi-blue">
+        <div class="kpi-label">Total Plays</div>
+        <div class="kpi-value" id="kpi-plays">—</div>
+        <div class="kpi-sub">streams</div>
+      </div>
+      <div class="kpi-hero-card">
+        <div class="kpi-label">Total Fans</div>
+        <div class="kpi-value" id="kpi-fans">—</div>
+        <div class="kpi-sub">claimers</div>
+      </div>
+      <div class="kpi-hero-card kpi-green">
+        <div class="kpi-label">Revenue</div>
+        <div class="kpi-value kpi-v-green" id="kpi-revenue">—</div>
+        <div class="kpi-sub">earned</div>
+      </div>
     </div>
+    <div id="a-insights"></div>
     <div class="section-hdr">
       <div class="section-title">RECENT DROPS</div>
       <button class="btn btn-sm btn-primary" onclick="nav('create-drop')">+ New Drop</button>
@@ -1108,16 +1128,31 @@ async function loadArtistDashboard() {
     const data = await API.json(`/users/${state.user.id}/profile`);
     const p = data.profile;
     const s = p?.stats || {};
-    const statsEl = document.getElementById('a-stats');
-    if (statsEl) statsEl.innerHTML = `
-      <div class="stat-card"><div class="stat-label">DROPS</div><div class="stat-value">${fmt(s.total_drops)}</div></div>
-      <div class="stat-card"><div class="stat-label">TOTAL PLAYS</div><div class="stat-value">${fmt(s.total_plays)}</div></div>
-      <div class="stat-card"><div class="stat-label">TOTAL FANS</div><div class="stat-value">${fmt(s.total_fans)}</div></div>
-      <div class="stat-card"><div class="stat-label">REVENUE</div><div class="stat-value green">${fmtMoney(s.total_revenue)}</div></div>`;
+
+    // Populate hero KPI cards
+    const setKpi = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    setKpi('kpi-drops',   fmt(s.total_drops) || '0');
+    setKpi('kpi-plays',   fmt(s.total_plays) || '0');
+    setKpi('kpi-fans',    fmt(s.total_fans)  || '0');
+    setKpi('kpi-revenue', fmtMoney(s.total_revenue));
+
+    // Generate actionable insights
+    const drops = p?.drops || [];
+    const insightsEl = document.getElementById('a-insights');
+    if (insightsEl) {
+      const insights = buildArtistInsights(s, drops);
+      if (insights.length) {
+        insightsEl.innerHTML = `
+          <div class="section-hdr" style="margin-bottom:10px">
+            <div class="section-title">INSIGHTS</div>
+            <span class="text-gray text-sm">Based on your performance data</span>
+          </div>
+          <div class="insights-grid">${insights.map(renderInsightCard).join('')}</div>`;
+      }
+    }
 
     const dropsEl = document.getElementById('a-drops');
     if (dropsEl) {
-      const drops = p?.drops || [];
       dropsEl.innerHTML = drops.length
         ? drops.slice(0, 8).map(d => renderDropRow(d, true)).join('')
         : emptyState('🎤', 'No drops yet', 'Create your first drop and go live', `<button class="btn btn-primary" onclick="nav('create-drop')">+ Create Drop</button>`);
@@ -1125,17 +1160,67 @@ async function loadArtistDashboard() {
   } catch (e) {}
 }
 
+function buildArtistInsights(stats, drops) {
+  const insights = [];
+  const totalDrops  = stats.total_drops  || 0;
+  const totalPlays  = stats.total_plays  || 0;
+  const totalFans   = stats.total_fans   || 0;
+  const totalRev    = stats.total_revenue || 0;
+
+  if (totalDrops === 0) {
+    insights.push({ type: 'tip', icon: '🎤', title: 'Get Started', text: 'Drop your first track to start building your audience. Limited drops create scarcity and drive urgency.', cta: 'Create a drop →', ctaFn: "nav('create-drop')" });
+  } else {
+    const convRate = totalPlays > 0 ? ((totalFans / totalPlays) * 100).toFixed(1) : 0;
+    if (convRate > 0 && convRate < 5) {
+      insights.push({ type: 'boost', icon: '🚀', title: 'Boost Opportunity', text: `Your conversion rate is ${convRate}%. A targeted boost could 3-5× your claim rate and push this drop to new fans.`, cta: 'View boosts →', ctaFn: "nav('artist-drops')" });
+    } else if (convRate >= 5) {
+      insights.push({ type: 'win', icon: '🔥', title: 'High Conversion', text: `${convRate}% of listeners are claiming — that's above average. Your audience is engaged.` });
+    }
+    if (totalRev > 0) {
+      insights.push({ type: 'win', icon: '💰', title: 'Earning', text: `You've earned ${fmtMoney(totalRev)} across ${totalDrops} drop${totalDrops !== 1 ? 's' : ''}. Keep the momentum going with your next release.` });
+    }
+    const liveDrop = drops.find(d => d.status === 'live');
+    if (liveDrop) {
+      insights.push({ type: 'tip', icon: '⏱️', title: 'Drop is Live', text: `"${esc(liveDrop.title)}" is live now. This is prime time — share it to maximize the window.`, cta: 'View analytics →', ctaFn: "nav('artist-analytics')" });
+    }
+    if (totalFans > 0 && totalRev === 0) {
+      insights.push({ type: 'tip', icon: '💡', title: 'Monetize Your Audience', text: `${fmt(totalFans)} fans have claimed your drops for free. Try a paid tier on your next release.`, cta: 'Create paid drop →', ctaFn: "nav('create-drop')" });
+    }
+  }
+  return insights.slice(0, 3);
+}
+
+function renderInsightCard(ins) {
+  const typeClass = { boost:'insight-boost', tip:'insight-tip', win:'insight-win', warn:'insight-warn' }[ins.type] || 'insight-tip';
+  return `
+    <div class="insight-card ${typeClass}">
+      <div class="insight-icon">${ins.icon}</div>
+      <div class="insight-body">
+        <div class="insight-title">${esc(ins.title)}</div>
+        <div class="insight-text">${ins.text}</div>
+        ${ins.cta ? `<span class="insight-cta" onclick="${ins.ctaFn}">${ins.cta}</span>` : ''}
+      </div>
+    </div>`;
+}
+
 function renderDropRow(d, showActions = false) {
   const cv = d.cover_image_path ? `/api/covers/${d.cover_image_path.split('/').pop()}` : null;
+  const plays = d.play_count || 0;
+  const claims = d.claim_count || 0;
+  const supply = d.total_supply || 0;
+  const claimedPct = supply > 0 ? Math.min(100, Math.round((claims / supply) * 100)) : 0;
+  const convPct = plays > 0 ? Math.min(100, Math.round((claims / plays) * 100)) : 0;
   return `
     <div class="drop-row" onclick="openDrop('${d.id}')">
       <div class="thumb">${cv ? `<img src="${cv}" alt="">` : '🎵'}</div>
       <div class="info">
         <div class="title">${esc(d.title)}</div>
-        <div class="sub">${statusBadge(d.status)} ${d.total_supply ? `• ${d.total_supply - (d.remaining_supply||0)}/${d.total_supply} claimed` : ''}</div>
+        <div class="sub">${statusBadge(d.status)} ${supply ? `• ${claims}/${supply} claimed` : ''}</div>
+        ${supply > 0 ? `<div class="perf-bar-wrap" style="margin-top:6px;width:120px"><div class="perf-bar-fill perf-green" style="width:${claimedPct}%"></div></div>` : ''}
       </div>
       <div class="meta">
-        <div class="stat"><div class="num">${fmt(d.claim_count || 0)}</div><div class="lbl">CLAIMS</div></div>
+        <div class="stat"><div class="num">${fmt(plays)}</div><div class="lbl">PLAYS</div></div>
+        <div class="stat"><div class="num">${fmt(claims)}</div><div class="lbl">CLAIMS</div></div>
         <div class="stat"><div class="num green">${fmtMoney(d.revenue || 0)}</div><div class="lbl">REV</div></div>
         ${showActions ? `<div onclick="event.stopPropagation()">
           <button class="btn btn-sm btn-ghost" onclick="nav('edit-drop',{drop:${JSON.stringify({id:d.id,title:d.title,status:d.status})}})">Edit</button>
@@ -1550,14 +1635,20 @@ async function loadLabelRevenue() {
 function renderLabelAnalytics() {
   if (!state.label) return pageWrap('ANALYTICS', '', '<div class="loading"><div class="spinner"></div></div>');
   return pageWrap('ANALYTICS', 'Velocity & engagement across your roster', `
+    <div class="label-kpi-row" id="la-kpi-row">
+      <div class="label-kpi-card"><div class="label-kpi-num" id="la-kpi-plays">—</div><div class="label-kpi-lbl">Total Plays</div></div>
+      <div class="label-kpi-card"><div class="label-kpi-num" id="la-kpi-claims">—</div><div class="label-kpi-lbl">Total Claims</div></div>
+      <div class="label-kpi-card"><div class="label-kpi-num green" id="la-kpi-rev">—</div><div class="label-kpi-lbl">Total Revenue</div></div>
+      <div class="label-kpi-card"><div class="label-kpi-num" id="la-kpi-artists">—</div><div class="label-kpi-lbl">Artists</div></div>
+    </div>
     <div class="section-hdr"><div class="section-title">TOP DROPS BY VELOCITY</div></div>
     <div class="table-wrap" style="margin-bottom:28px"><table class="data-table">
-      <thead><tr><th>Drop</th><th>Artist</th><th>Plays</th><th>Saves</th><th>Shares</th><th>Claims</th><th>Velocity</th></tr></thead>
-      <tbody id="la-drops-table"><tr><td colspan="7" style="text-align:center;padding:30px"><div class="spinner" style="margin:auto"></div></td></tr></tbody>
+      <thead><tr><th>Drop</th><th>Artist</th><th>Velocity</th><th>Plays</th><th>Claims</th><th>Conv%</th></tr></thead>
+      <tbody id="la-drops-table"><tr><td colspan="6" style="text-align:center;padding:30px"><div class="spinner" style="margin:auto"></div></td></tr></tbody>
     </table></div>
-    <div class="section-hdr"><div class="section-title">ROSTER ENGAGEMENT</div></div>
+    <div class="section-hdr"><div class="section-title">ROSTER PERFORMANCE</div></div>
     <div class="table-wrap"><table class="data-table">
-      <thead><tr><th>Artist</th><th>Plays</th><th>Saves</th><th>Shares</th><th>Claims</th></tr></thead>
+      <thead><tr><th>Artist</th><th>Plays</th><th>Claims</th><th>Conv%</th><th>Revenue</th></tr></thead>
       <tbody id="la-roster-table"><tr><td colspan="5" style="text-align:center;padding:30px"><div class="spinner" style="margin:auto"></div></td></tr></tbody>
     </table></div>`);
 }
@@ -1568,28 +1659,51 @@ async function loadLabelAnalytics() {
     const data = await API.json(`/labels/${state.label.id}/analytics`);
     const drops = data.top_drops || [];
     const roster = data.roster_engagement || [];
+
+    // Aggregate KPIs
+    const totalPlays  = drops.reduce((s, d) => s + (d.plays || 0), 0);
+    const totalClaims = drops.reduce((s, d) => s + (d.claims || 0), 0);
+    const totalRev    = roster.reduce((s, a) => s + (a.revenue || 0), 0);
+    const setEl = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+    setEl('la-kpi-plays',   fmt(totalPlays)  || '0');
+    setEl('la-kpi-claims',  fmt(totalClaims) || '0');
+    setEl('la-kpi-rev',     fmtMoney(totalRev));
+    setEl('la-kpi-artists', fmt(roster.length) || '0');
+
+    // Drops table with velocity badges + conv rate
     const dt = document.getElementById('la-drops-table');
     if (dt) dt.innerHTML = drops.length
-      ? drops.map(d => `<tr>
-          <td>${esc(d.title)}</td>
-          <td class="text-gray">@${esc(d.artist)}</td>
-          <td class="mono">${fmt(d.plays)}</td>
-          <td class="mono">${fmt(d.saves)}</td>
-          <td class="mono">${fmt(d.shares)}</td>
-          <td class="mono">${fmt(d.claims)}</td>
-          <td class="mono text-red">${d.velocity_score}</td>
-        </tr>`).join('')
-      : `<tr><td colspan="7" style="text-align:center;color:var(--gray-mid);padding:30px">No data yet</td></tr>`;
+      ? drops.map(d => {
+          const dp = d.plays || 0;
+          const dc = d.claims || 0;
+          const dcr = dp > 0 ? ((dc / dp) * 100).toFixed(1) : '—';
+          return `<tr>
+            <td><strong>${esc(d.title)}</strong></td>
+            <td class="text-gray">@${esc(d.artist)}</td>
+            <td>${velBadge(d.velocity_score)}</td>
+            <td class="mono">${fmt(dp)}</td>
+            <td class="mono">${fmt(dc)}</td>
+            <td class="mono">${dcr}%</td>
+          </tr>`;
+        }).join('')
+      : `<tr><td colspan="6" style="text-align:center;color:var(--gray-mid);padding:30px">No drop data yet — artists need active drops</td></tr>`;
+
+    // Roster table with revenue + conv rate
     const rt = document.getElementById('la-roster-table');
     if (rt) rt.innerHTML = roster.length
-      ? roster.map(a => `<tr>
-          <td>@${esc(a.username)}</td>
-          <td class="mono">${fmt(a.plays)}</td>
-          <td class="mono">${fmt(a.saves)}</td>
-          <td class="mono">${fmt(a.shares)}</td>
-          <td class="mono">${fmt(a.claims)}</td>
-        </tr>`).join('')
-      : `<tr><td colspan="5" style="text-align:center;color:var(--gray-mid);padding:30px">No data yet</td></tr>`;
+      ? roster.map(a => {
+          const rp = a.plays || 0;
+          const rc = a.claims || 0;
+          const rcr = rp > 0 ? ((rc / rp) * 100).toFixed(1) : '—';
+          return `<tr>
+            <td>@${esc(a.username)}</td>
+            <td class="mono">${fmt(rp)}</td>
+            <td class="mono">${fmt(rc)}</td>
+            <td class="mono">${rcr}%</td>
+            <td class="mono text-green">${fmtMoney(a.revenue || 0)}</td>
+          </tr>`;
+        }).join('')
+      : `<tr><td colspan="5" style="text-align:center;color:var(--gray-mid);padding:30px">No roster data yet — sign artists to your label to see performance</td></tr>`;
   } catch (e) {}
 }
 
@@ -2236,11 +2350,21 @@ function renderArtistAnalytics() {
   return pageWrap('ANALYTICS', 'Drop performance deep dive', `
     <div id="analytics-overview"><div class="loading"><div class="spinner"></div></div></div>
     <div class="section-hdr" style="margin-top:28px">
-      <div class="section-title">SELECT A DROP</div>
+      <div class="section-title">DRILL INTO A DROP</div>
+      <span class="text-gray text-sm">Select a drop for full conversion data</span>
     </div>
     <div id="analytics-drop-picker"></div>
     <div id="analytics-drop-detail" style="margin-top:20px"></div>
   `);
+}
+
+function velBadge(score) {
+  if (!score || score === '—') return `<span class="vel-badge vel-cold">— COLD</span>`;
+  const n = parseFloat(score);
+  if (n >= 8) return `<span class="vel-badge vel-hot">🔥 ${score}</span>`;
+  if (n >= 5) return `<span class="vel-badge vel-warm">⚡ ${score}</span>`;
+  if (n >= 2) return `<span class="vel-badge vel-cool">↑ ${score}</span>`;
+  return `<span class="vel-badge vel-cold">— ${score}</span>`;
 }
 
 async function loadArtistAnalytics() {
@@ -2251,39 +2375,104 @@ async function loadArtistAnalytics() {
     ]);
 
     const ov = overviewData.summary || {};
+    const plays  = ov.engagement?.plays || 0;
+    const claims = ov.total_claims || 0;
+    const convRate = plays > 0 ? ((claims / plays) * 100).toFixed(1) : 0;
     const el = document.getElementById('analytics-overview');
+
     if (el) el.innerHTML = `
-      <div class="stats-grid">
-        <div class="stat-card"><div class="stat-label">FOLLOWERS</div><div class="stat-value">${fmt(ov.follower_count)}</div></div>
-        <div class="stat-card"><div class="stat-label">TOTAL PLAYS</div><div class="stat-value">${fmt(ov.engagement?.plays)}</div></div>
-        <div class="stat-card"><div class="stat-label">TOTAL CLAIMS</div><div class="stat-value">${fmt(ov.total_claims)}</div></div>
-        <div class="stat-card"><div class="stat-label">REVENUE</div><div class="stat-value green">${fmtMoney(ov.revenue?.total)}</div></div>
+      <div class="kpi-hero-grid">
+        <div class="kpi-hero-card kpi-blue">
+          <div class="kpi-label">Total Plays</div>
+          <div class="kpi-value">${fmt(plays)}</div>
+          <div class="kpi-sub">across all drops</div>
+        </div>
+        <div class="kpi-hero-card">
+          <div class="kpi-label">Total Claims</div>
+          <div class="kpi-value">${fmt(claims)}</div>
+          <div class="kpi-sub">fans who own your music</div>
+        </div>
+        <div class="kpi-hero-card kpi-orange">
+          <div class="kpi-label">Conv. Rate</div>
+          <div class="kpi-value">${convRate}%</div>
+          <div class="kpi-sub">plays → claims</div>
+        </div>
+        <div class="kpi-hero-card kpi-green">
+          <div class="kpi-label">Revenue</div>
+          <div class="kpi-value kpi-v-green">${fmtMoney(ov.revenue?.total)}</div>
+          <div class="kpi-sub">total earned</div>
+        </div>
       </div>
       ${overviewData.top_drops?.length ? `
-        <div class="section-hdr" style="margin-top:20px"><div class="section-title">TOP DROPS BY VELOCITY</div></div>
+        <div class="section-hdr" style="margin-top:4px;margin-bottom:12px">
+          <div class="section-title">TOP DROPS BY VELOCITY</div>
+        </div>
         <div class="table-wrap"><table class="data-table">
-          <thead><tr><th>Drop</th><th>Status</th><th>🔥 Velocity</th><th>Claims</th><th>Revenue</th></tr></thead>
+          <thead><tr><th>Drop</th><th>Status</th><th>Velocity</th><th>Plays</th><th>Claims</th><th>Conv%</th><th>Revenue</th></tr></thead>
           <tbody>
-            ${overviewData.top_drops.map(d => `<tr>
-              <td><strong>${esc(d.title)}</strong></td>
-              <td>${statusBadge(d.status)}</td>
-              <td class="mono text-red">${d.velocity}</td>
-              <td class="mono">${fmt(d.claims)}</td>
-              <td class="mono text-green">${fmtMoney(d.revenue)}</td>
-            </tr>`).join('')}
+            ${overviewData.top_drops.map(d => {
+              const dp = d.plays || 0;
+              const dc = d.claims || 0;
+              const dcr = dp > 0 ? ((dc / dp)*100).toFixed(1) : '—';
+              return `<tr>
+                <td><strong>${esc(d.title)}</strong></td>
+                <td>${statusBadge(d.status)}</td>
+                <td>${velBadge(d.velocity)}</td>
+                <td class="mono">${fmt(dp)}</td>
+                <td class="mono">${fmt(dc)}</td>
+                <td class="mono">${dcr}%</td>
+                <td class="mono text-green">${fmtMoney(d.revenue)}</td>
+              </tr>`;
+            }).join('')}
           </tbody>
         </table></div>` : ''}`;
 
     const drops = dropsData.drops || [];
     const pickerEl = document.getElementById('analytics-drop-picker');
-    if (pickerEl && drops.length) {
-      pickerEl.innerHTML = `
-        <select class="btn btn-secondary" style="width:100%;text-align:left;padding:10px" onchange="loadDropAnalytics(this.value)">
-          <option value="">-- Pick a drop to see full analytics --</option>
-          ${drops.map(d => `<option value="${d.id}">${esc(d.title)} (${d.status})</option>`).join('')}
-        </select>`;
+    if (pickerEl) {
+      if (drops.length) {
+        pickerEl.innerHTML = `
+          <select class="btn btn-secondary" style="width:100%;text-align:left;padding:10px" onchange="loadDropAnalytics(this.value)">
+            <option value="">— Select a drop for full breakdown —</option>
+            ${drops.map(d => `<option value="${d.id}">${esc(d.title)} · ${d.status}</option>`).join('')}
+          </select>`;
+      } else {
+        pickerEl.innerHTML = emptyState('🎤', 'No drops yet', 'Once you release a drop, your full conversion funnel will appear here.', `<button class="btn btn-primary" onclick="nav('create-drop')">+ Create Drop</button>`);
+      }
     }
-  } catch (e) {}
+  } catch (e) {
+    const el = document.getElementById('analytics-overview');
+    if (el) el.innerHTML = emptyState('📈', 'Analytics loading...', 'Your performance data will appear here once you have active drops.');
+  }
+}
+
+function buildDropInsights(data, eng, rev, convRate) {
+  const insights = [];
+  const plays  = eng.plays  || 0;
+  const claims = eng.claims || 0;
+  const vel    = parseFloat(data.current_velocity) || 0;
+  const conv   = parseFloat(convRate) || 0;
+
+  if (vel >= 8) {
+    insights.push({ type:'win', icon:'🔥', title:'High Velocity', text:'This drop is trending hard. Consider extending the window or creating a follow-up drop to capitalize on the momentum.' });
+  } else if (vel >= 3 && vel < 8) {
+    insights.push({ type:'tip', icon:'⚡', title:'Gaining Traction', text:`Velocity is ${data.current_velocity}. A boost right now could push this into the trending section and accelerate claims.`, cta:'Boost this drop →', ctaFn:"nav('artist-drops')" });
+  } else if (plays > 0 && vel < 2) {
+    insights.push({ type:'boost', icon:'🚀', title:'Boost Recommended', text:'Velocity is low. A targeted boost can get this in front of new fans and revive engagement in the drop window.', cta:'See boost options →', ctaFn:"nav('artist-drops')" });
+  }
+
+  if (conv >= 10) {
+    insights.push({ type:'win', icon:'✅', title:'Strong Conversion', text:`${conv}% of listeners claim — well above average. Your audience is highly engaged with this release.` });
+  } else if (conv > 0 && conv < 3) {
+    insights.push({ type:'warn', icon:'💡', title:'Low Conversion', text:`Only ${conv}% of plays convert to claims. Try lowering the access price or adding a free tier to bring more fans in.` });
+  }
+
+  if (rev.total > 0 && claims > 0) {
+    const avgRev = (rev.total / claims).toFixed(2);
+    insights.push({ type:'win', icon:'💰', title:'Avg Per Fan', text:`You're averaging $${avgRev} per claimer on this drop.` });
+  }
+
+  return insights.slice(0, 2);
 }
 
 window.loadDropAnalytics = async function(dropId) {
@@ -2297,29 +2486,57 @@ window.loadDropAnalytics = async function(dropId) {
     const rev = data.revenue || {};
     const funnel = data.funnel || [];
 
+    const plays   = eng.plays  || 0;
+    const claims  = eng.claims || 0;
+    const dropConv = plays > 0 ? ((claims / plays) * 100).toFixed(1) : 0;
+    const dropInsights = buildDropInsights(data, eng, rev, dropConv);
+
     el.innerHTML = `
       <div class="card card-pad" style="margin-bottom:20px">
-        <div class="section-title" style="margin-bottom:16px">${esc(data.drop_title)} — Full Analytics</div>
-        <div class="stats-grid">
-          <div class="stat-card"><div class="stat-label">PLAYS</div><div class="stat-value">${fmt(eng.plays)}</div></div>
-          <div class="stat-card"><div class="stat-label">SAVES</div><div class="stat-value">${fmt(eng.saves)}</div></div>
-          <div class="stat-card"><div class="stat-label">SHARES</div><div class="stat-value">${fmt(eng.shares)}</div></div>
-          <div class="stat-card"><div class="stat-label">CLAIMS</div><div class="stat-value">${fmt(eng.claims)}</div></div>
-          <div class="stat-card"><div class="stat-label">VELOCITY</div><div class="stat-value text-red">${data.current_velocity}</div></div>
-          <div class="stat-card"><div class="stat-label">REVENUE</div><div class="stat-value green">${fmtMoney(rev.total)}</div></div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div class="section-title">${esc(data.drop_title)}</div>
+          ${velBadge(data.current_velocity)}
+        </div>
+        <div class="kpi-hero-grid" style="margin-bottom:20px">
+          <div class="kpi-hero-card kpi-blue">
+            <div class="kpi-label">Plays</div>
+            <div class="kpi-value">${fmt(plays)}</div>
+            <div class="kpi-sub">total streams</div>
+          </div>
+          <div class="kpi-hero-card">
+            <div class="kpi-label">Claims</div>
+            <div class="kpi-value">${fmt(claims)}</div>
+            <div class="kpi-sub">fans who own it</div>
+          </div>
+          <div class="kpi-hero-card kpi-orange">
+            <div class="kpi-label">Conv. Rate</div>
+            <div class="kpi-value">${dropConv}%</div>
+            <div class="kpi-sub">plays → claims</div>
+          </div>
+          <div class="kpi-hero-card kpi-green">
+            <div class="kpi-label">Revenue</div>
+            <div class="kpi-value kpi-v-green">${fmtMoney(rev.total)}</div>
+            <div class="kpi-sub">earned</div>
+          </div>
         </div>
 
-        <div class="section-title" style="margin-top:20px;margin-bottom:12px">CONVERSION FUNNEL</div>
-        <div class="funnel-bars">
-          ${funnel.map(f => `
-            <div class="funnel-row">
-              <div class="funnel-label">${f.stage}</div>
-              <div class="funnel-bar-wrap">
-                <div class="funnel-bar" style="width:${f.pct}%;background:var(--red)"></div>
-              </div>
-              <div class="funnel-num">${fmt(f.count)} <span class="text-gray">(${f.pct}%)</span></div>
-            </div>`).join('')}
-        </div>
+        ${dropInsights.length ? `
+          <div class="insights-grid" style="margin-bottom:20px">
+            ${dropInsights.map(renderInsightCard).join('')}
+          </div>` : ''}
+
+        ${funnel.length ? `
+          <div class="section-title" style="margin-bottom:12px">CONVERSION FUNNEL</div>
+          <div class="funnel-bars">
+            ${funnel.map(f => `
+              <div class="funnel-row">
+                <div class="funnel-label">${f.stage}</div>
+                <div class="funnel-bar-wrap">
+                  <div class="funnel-bar" style="width:${f.pct}%;background:var(--red)"></div>
+                </div>
+                <div class="funnel-num">${fmt(f.count)} <span class="text-gray">(${f.pct}%)</span></div>
+              </div>`).join('')}
+          </div>` : ''}
 
         ${data.recent_claimers?.length ? `
           <div class="section-title" style="margin-top:20px;margin-bottom:12px">RECENT CLAIMERS</div>
