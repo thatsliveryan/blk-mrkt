@@ -147,9 +147,22 @@ def create_boost_checkout_session(boost_id, drop_title, budget_cents, artist):
 
 
 def _verify_webhook_signature(payload_bytes, sig_header):
-    """Verify Stripe webhook signature (HMAC-SHA256 with timestamp tolerance)."""
+    """
+    Verify Stripe webhook signature (HMAC-SHA256 with timestamp tolerance).
+
+    Security policy:
+      - STRIPE_SECRET_KEY set + STRIPE_WEBHOOK_SECRET missing → REJECT.
+        Stripe is live; missing webhook secret means misconfiguration, not dev mode.
+        Allowing unsigned events here would let anyone forge subscription upgrades.
+      - Neither key set → allow (pure local dev, no Stripe at all).
+      - Both set → verify normally.
+    """
     if not STRIPE_WEBHOOK_SECRET:
-        return True  # Skip in dev/test mode
+        if STRIPE_SECRET_KEY:
+            # Stripe is configured but webhook secret is absent — refuse rather than bypass.
+            # Set STRIPE_WEBHOOK_SECRET in Railway env vars to fix this.
+            return False
+        return True  # Pure dev/test mode — no Stripe at all
 
     try:
         parts = {p.split("=")[0]: p.split("=")[1] for p in sig_header.split(",")}

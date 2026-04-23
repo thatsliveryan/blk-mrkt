@@ -33,6 +33,13 @@ VERIFY_TOKEN_TTL   = 86400      # 24 hours (seconds)
 RESET_TOKEN_TTL    = 3600       # 1 hour (seconds)
 RESET_RATE_LIMIT_S = 300        # 5 minutes between reset requests
 
+# ---------------------------------------------------------------------------
+# Security: constant-time dummy hash for login timing attack prevention.
+# Always run bcrypt regardless of whether the email exists, so response
+# time doesn't leak whether an account is registered.
+# ---------------------------------------------------------------------------
+_DUMMY_HASH = bcrypt.hashpw(b"blkmrkt_timing_sentinel_do_not_use", bcrypt.gensalt()).decode()
+
 
 # ---------------------------------------------------------------------------
 # Token helpers
@@ -72,11 +79,28 @@ def get_auth_user(req):
 def require_auth(f):
     @wraps(f)
     def wrapper(req, **kwargs):
-        uid, role = get_auth_user(req)
+        uid, _ = get_auth_user(req)
         if not uid:
             return jsonify({"error": "Missing or invalid token"}, 401), 401
+
+        # --- JWT role staleness fix ---
+        # Always read role + suspended from DB so bans and role changes take
+        # effect immediately without waiting for the token to expire.
+        conn = get_db()
+        try:
+            row = conn.execute(
+                "SELECT role, suspended FROM users WHERE id = ?", (uid,)
+            ).fetchone()
+        finally:
+            conn.close()
+
+        if not row:
+            return jsonify({"error": "Account not found"}, 401), 401
+        if row["suspended"]:
+            return jsonify({"error": "Account suspended"}, 403), 403
+
         srv.g.user_id = uid
-        srv.g.user_role = role
+        srv.g.user_role = row["role"]   # fresh DB role, not stale JWT claim
         return f(req, **kwargs)
     return wrapper
 
@@ -238,8 +262,16 @@ def login(req):
     finally:
         conn.close()
 
-    if not user or not bcrypt.checkpw(password.encode(), user["password_hash"].encode()):
+    # Always run bcrypt regardless of whether the user exists — prevents timing-based
+    # email enumeration (non-existent email would otherwise return ~0ms, real email ~200ms).
+    hash_to_check = user["password_hash"] if user else _DUMMY_HASH
+    password_valid = bcrypt.checkpw(password.encode(), hash_to_check.encode())
+
+    if not user or not password_valid:
         return jsonify({"error": "Invalid credentials"}, 401), 401
+
+    if user.get("suspended"):
+        return jsonify({"error": "Account suspended"}, 403), 403
 
     access  = create_token(user["id"], user["role"], "access")
     refresh = create_token(user["id"], user["role"], "refresh")

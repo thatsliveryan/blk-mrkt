@@ -74,10 +74,15 @@ def health(req):
 # ---------------------------------------------------------------------------
 @app.route('/api/admin/reseed')
 def reseed(req):
-    from auth import require_auth, require_role
     from config import ADMIN_SECRET
-    secret = req.query.get("secret") or (req.json or {}).get("secret", "")
-    if secret != ADMIN_SECRET:
+    # Accept secret via query param OR JSON body — never log it
+    body = req.get_json(silent=True) or {}
+    secret = req.query.get("secret") or body.get("secret", "")
+    if not ADMIN_SECRET or not secret:
+        return jsonify({"error": "Unauthorized"}, 403), 403
+    # Constant-time compare to prevent timing-based secret enumeration
+    import hmac as _hmac
+    if not _hmac.compare_digest(str(secret), str(ADMIN_SECRET)):
         return jsonify({"error": "Unauthorized"}, 403), 403
     try:
         import seed
@@ -145,6 +150,27 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
+
+        # --- Security headers (fix #6 from security audit) ---
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
+        self.send_header('X-XSS-Protection', '0')   # Disabled — use CSP instead
+        self.send_header('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
+        # CSP: only applies to HTML pages (not JSON API responses)
+        if resp.content_type and 'html' in resp.content_type:
+            self.send_header('Content-Security-Policy',
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' https://js.stripe.com; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                "font-src 'self' https://fonts.gstatic.com; "
+                "img-src 'self' data: blob: https:; "
+                "media-src 'self' blob:; "
+                "connect-src 'self' https://api.stripe.com; "
+                "frame-src https://js.stripe.com https://hooks.stripe.com; "
+                "worker-src blob:;"
+            )
+
         for k, v in resp.headers.items():
             self.send_header(k, v)
 
@@ -166,7 +192,9 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
                     self.client_address[0]
 
         # Determine which rate limit bucket applies
-        if path.startswith('/api/auth/login') or path.startswith('/api/auth/register'):
+        if path.startswith('/api/auth/'):
+            # All auth endpoints share one bucket: login, register, forgot-password,
+            # reset-password, resend-verification. Prevents brute-force on all of them.
             limit, window = RATE_LIMITS["auth"]
             key = f"ip:{client_ip}:auth"
         elif path.endswith('/access') and req.method == 'POST':
