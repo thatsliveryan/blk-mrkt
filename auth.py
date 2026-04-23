@@ -319,6 +319,7 @@ def me(req):
         user = row_to_dict(conn.execute(
             """SELECT id, username, email, role, city, bio, avatar_url,
                       email_verified, tos_agreed, stripe_connect_id, stripe_onboarded,
+                      tier, tier_expires_at, billing_cycle,
                       created_at
                FROM users WHERE id = ?""",
             (srv.g.user_id,),

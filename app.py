@@ -135,6 +135,30 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
         srv.g = type('G', (), {})()
         return req
 
+    def _add_security_headers(self, content_type=None):
+        """
+        Emit security headers on every response, regardless of code path.
+        Call this after send_response() but before end_headers().
+        """
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
+        self.send_header('X-XSS-Protection', '0')   # Disabled — use CSP instead
+        self.send_header('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
+        # CSP only on HTML responses — not JSON or binary assets
+        if content_type and 'html' in content_type:
+            self.send_header('Content-Security-Policy',
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' https://js.stripe.com; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                "font-src 'self' https://fonts.gstatic.com; "
+                "img-src 'self' data: blob: https:; "
+                "media-src 'self' blob:; "
+                "connect-src 'self' https://api.stripe.com; "
+                "frame-src https://js.stripe.com https://hooks.stripe.com; "
+                "worker-src blob:;"
+            )
+
     def _send_response(self, resp):
         """Send a Response object back to the client."""
         if isinstance(resp, tuple):
@@ -150,26 +174,7 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
-
-        # --- Security headers (fix #6 from security audit) ---
-        self.send_header('X-Content-Type-Options', 'nosniff')
-        self.send_header('X-Frame-Options', 'DENY')
-        self.send_header('Referrer-Policy', 'strict-origin-when-cross-origin')
-        self.send_header('X-XSS-Protection', '0')   # Disabled — use CSP instead
-        self.send_header('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
-        # CSP: only applies to HTML pages (not JSON API responses)
-        if resp.content_type and 'html' in resp.content_type:
-            self.send_header('Content-Security-Policy',
-                "default-src 'self'; "
-                "script-src 'self' 'unsafe-inline' https://js.stripe.com; "
-                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-                "font-src 'self' https://fonts.gstatic.com; "
-                "img-src 'self' data: blob: https:; "
-                "media-src 'self' blob:; "
-                "connect-src 'self' https://api.stripe.com; "
-                "frame-src https://js.stripe.com https://hooks.stripe.com; "
-                "worker-src blob:;"
-            )
+        self._add_security_headers(resp.content_type)
 
         for k, v in resp.headers.items():
             self.send_header(k, v)
@@ -192,9 +197,14 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
                     self.client_address[0]
 
         # Determine which rate limit bucket applies
-        if path.startswith('/api/auth/'):
-            # All auth endpoints share one bucket: login, register, forgot-password,
-            # reset-password, resend-verification. Prevents brute-force on all of them.
+        _SENSITIVE_AUTH = (
+            '/api/auth/login', '/api/auth/register',
+            '/api/auth/forgot-password', '/api/auth/reset-password',
+            '/api/auth/resend-verification',
+        )
+        if any(path.startswith(p) for p in _SENSITIVE_AUTH):
+            # Shared bucket for credential/token-issuing endpoints only.
+            # /api/auth/me and /api/auth/refresh are intentionally excluded.
             limit, window = RATE_LIMITS["auth"]
             key = f"ip:{client_ip}:auth"
         elif path.endswith('/access') and req.method == 'POST':
@@ -357,6 +367,7 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
                     self.send_header('Accept-Ranges', 'bytes')
                     self.send_header('Content-Length', str(length))
                     self.send_header('Access-Control-Allow-Origin', '*')
+                    self._add_security_headers(mime)
                     self.end_headers()
                     self.wfile.write(data)
                     return
@@ -368,6 +379,7 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Length', str(file_size))
             self.send_header('Accept-Ranges', 'bytes')
             self.send_header('Access-Control-Allow-Origin', '*')
+            self._add_security_headers(mime)
             self.end_headers()
             self.wfile.write(data)
 
@@ -383,6 +395,7 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Length', str(len(data)))
             self.send_header('Accept-Ranges', 'bytes')
             self.send_header('Access-Control-Allow-Origin', '*')
+            self._add_security_headers(mime or 'audio/mpeg')
             self.end_headers()
             self.wfile.write(data)
 
@@ -408,6 +421,7 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', mime)
         self.send_header('Content-Length', str(len(data)))
         self.send_header('Access-Control-Allow-Origin', '*')
+        self._add_security_headers(mime)
         self.end_headers()
         self.wfile.write(data)
 
@@ -427,6 +441,7 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', mime)
             self.send_header('Content-Length', str(len(data)))
             self.send_header('Cache-Control', 'no-cache')
+            self._add_security_headers(mime)
             self.end_headers()
             self.wfile.write(data)
         else:
@@ -438,6 +453,7 @@ class BLKMRKTHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/html')
                 self.send_header('Content-Length', str(len(data)))
+                self._add_security_headers('text/html')
                 self.end_headers()
                 self.wfile.write(data)
             else:

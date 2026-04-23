@@ -63,7 +63,7 @@ def file_report(req):
       drop_id, claimant_name, claimant_email, original_work,
       statement_confirmed (bool), perjury_confirmed (bool)
     """
-    body = req.json or {}
+    body = req.get_json(silent=True) or {}
 
     drop_id           = (body.get("drop_id") or "").strip()
     claimant_name     = (body.get("claimant_name") or "").strip()
@@ -170,7 +170,7 @@ def file_counter(req):
 
     Required body: report_id, counter_statement
     """
-    body = req.json or {}
+    body = req.get_json(silent=True) or {}
 
     report_id         = (body.get("report_id") or "").strip()
     counter_statement = (body.get("counter_statement") or "").strip()
@@ -318,7 +318,7 @@ def resolve_report(req, report_id):
     - reject:    drop unlocked (dmca_review=0), status='rejected'
     - reinstate: after counter-notice, admin restores drop, status='reinstated'
     """
-    body = req.json or {}
+    body = req.get_json(silent=True) or {}
     action      = (body.get("action") or "").strip().lower()
     admin_notes = (body.get("admin_notes") or "").strip()
 

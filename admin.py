@@ -265,7 +265,8 @@ def suspend_user(req, user_id):
         return jsonify({"error": "Cannot suspend yourself"}, 400), 400
 
     data = req.get_json(silent=True) or {}
-    suspend = bool(data.get("suspend", True))
+    # Accept both "suspend":true and "suspended":true for client convenience
+    suspend = bool(data.get("suspend", data.get("suspended", True)))
 
     conn = get_db()
     try:
@@ -279,21 +280,18 @@ def suspend_user(req, user_id):
         if suspend:
             if user["role"] == "admin":
                 return jsonify({"error": "Cannot suspend an admin"}, 403), 403
-            # Stash original role in bio prefix hack — clean but minimal for MVP
-            new_role = "fan"  # suspended users become read-only fans
+            new_role = user["role"]   # preserve original role
             action = "suspended"
+            conn.execute("UPDATE users SET suspended = 1 WHERE id = ?", (user_id,))
         else:
-            new_role = data.get("restore_role", "fan")
-            if new_role not in ("artist", "fan", "curator"):
-                new_role = "fan"
+            new_role = user["role"]
             action = "unsuspended"
-
-        conn.execute("UPDATE users SET role = ? WHERE id = ?", (new_role, user_id))
+            conn.execute("UPDATE users SET suspended = 0 WHERE id = ?", (user_id,))
         conn.commit()
     finally:
         conn.close()
 
-    return jsonify({"message": f"User {action}", "user_id": user_id, "role": new_role})
+    return jsonify({"message": f"User {action}", "user_id": user_id, "role": new_role, "suspended": suspend})
 
 
 @admin_bp.route("/users/:user_id", methods=["DELETE"])
