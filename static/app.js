@@ -154,6 +154,42 @@ function roleBadge(role) {
   const map = { fan: 'badge-blue', artist: 'badge-red', label: 'badge-orange', admin: 'badge-gray', curator: 'badge-green' };
   return `<span class="badge ${map[role] || 'badge-gray'}">${role}</span>`;
 }
+
+// ---- Visual seed utilities (deterministic from string) ----
+function seedHash(str) {
+  let h = 0;
+  const s = String(str || 'x');
+  for (let i = 0; i < s.length; i++) h = Math.imul(31, h) + s.charCodeAt(i) | 0;
+  return Math.abs(h);
+}
+
+const AVATAR_PALETTE = [
+  '#FF2D2D', '#00C8FF', '#00C853', '#FF8C00',
+  '#8B5CF6', '#EC4899', '#F59E0B', '#06B6D4',
+];
+function avatarColor(str) {
+  return AVATAR_PALETTE[seedHash(str) % AVATAR_PALETTE.length];
+}
+
+function dropGradient(id) {
+  const h = seedHash(id || 'x');
+  const hue1 = (h * 137) % 360;
+  const hue2 = (hue1 + 50 + (h % 60)) % 360;
+  const sat  = 55 + (h % 25);
+  const lig  = 12 + (h % 12);
+  return `linear-gradient(135deg,hsl(${hue1},${sat}%,${lig}%) 0%,hsl(${hue2},${sat}%,${lig + 10}%) 100%)`;
+}
+
+function generateWaveBars(seed) {
+  const h = seedHash(seed || 'x');
+  let out = '';
+  for (let i = 0; i < 36; i++) {
+    const rng = Math.abs(Math.imul(h, i * 2654435761 + 1)) % 256;
+    const pct = (18 + (rng / 256) * 76).toFixed(1);
+    out += `<div class="wave-bar" style="height:${pct}%"></div>`;
+  }
+  return out;
+}
 function statusBadge(s) {
   const map = { live: 'badge-red', scheduled: 'badge-gray', expired: 'badge-gray', locked: 'badge-gray' };
   return `<span class="badge ${map[s] || 'badge-gray'}">${s}</span>`;
@@ -219,7 +255,7 @@ function renderSidebar() {
       </nav>
       <div class="sidebar-footer">
         <div class="user-chip" onclick="nav('${roleProfile()}')">
-          <div class="chip-avatar">${(u?.username || '?')[0].toUpperCase()}</div>
+          <div class="chip-avatar" style="background:${avatarColor(u?.username)}">${(u?.username || '?')[0].toUpperCase()}</div>
           <div class="chip-info">
             <div class="chip-name">@${esc(u?.username)}</div>
             <div class="chip-role">${u?.role}</div>
@@ -302,8 +338,9 @@ function render() {
 }
 
 function shellWrap(content) {
+  const role = state.user?.role || '';
   return `
-    <div class="app-shell">
+    <div class="app-shell" data-role="${role}">
       ${renderSidebar()}
       <main class="main-content">
         ${renderMobileHeader()}
@@ -552,9 +589,19 @@ async function loadFeed() {
     if (state.feedTab === 'live') {
       const d = await API.json('/drops?status=live&limit=50');
       drops = d.drops || [];
-      el.innerHTML = drops.length
-        ? `<div class="drops-grid">${drops.map(renderDropCard).join('')}</div>`
-        : emptyState('💿', 'No live drops yet', 'Check back soon');
+      if (drops.length) {
+        const featured = drops.slice(0, Math.min(3, drops.length));
+        const rest = drops.slice(3);
+        const railHtml = `
+          <div class="featured-rail-header">🔴 Live Right Now</div>
+          <div class="featured-rail">${featured.map(renderFeaturedCard).join('')}</div>`;
+        const gridHtml = rest.length
+          ? `<div class="more-drops-hdr">All Live Drops</div><div class="drops-grid">${drops.map(renderDropCard).join('')}</div>`
+          : '';
+        el.innerHTML = railHtml + gridHtml;
+      } else {
+        el.innerHTML = emptyState('💿', 'No live drops yet', 'Check back soon');
+      }
     } else if (state.feedTab === 'trending') {
       const d = await API.json('/drops/trending');
       drops = d.drops || [];
@@ -611,12 +658,14 @@ function renderDropCard(d) {
   const sp = d.supply_pct || 0;
   const barClass = sp > 80 ? 'critical' : sp > 60 ? 'low' : '';
   const hot = vel >= 50;
+  const isLive = d.status === 'live';
   const isSoldOut = d.is_sold_out;
+  const coverBg = !cv ? `style="background:${dropGradient(d.id)}"` : '';
   return `
-    <div class="drop-card ${hot ? 'hot' : ''} ${isSoldOut ? 'sold-out' : ''}" onclick="openDrop('${d.id}')">
-      <div class="cover">
-        ${cv ? `<img src="${cv}" alt="">` : `<div class="no-cover">🎵</div>`}
-        <span class="status-badge ${d.status}">${d.status === 'live' ? 'LIVE' : d.status === 'scheduled' ? 'SOON' : isSoldOut ? 'SOLD OUT' : 'ENDED'}</span>
+    <div class="drop-card ${hot ? 'hot' : ''} ${isLive ? 'live-drop' : ''} ${isSoldOut ? 'sold-out' : ''}" onclick="openDrop('${d.id}')">
+      <div class="cover" ${coverBg}>
+        ${cv ? `<img src="${cv}" alt="">` : `<div class="no-cover">${d.title ? d.title[0].toUpperCase() : '♪'}</div>`}
+        <span class="status-badge ${d.status}">${isLive ? 'LIVE' : d.status === 'scheduled' ? 'SOON' : isSoldOut ? 'SOLD OUT' : 'ENDED'}</span>
         ${vel > 0 ? `<span class="vel-badge">${velEmoji(vel)}</span>` : ''}
         ${d.boost_active ? `<span class="boost-badge">🚀 BOOSTED</span>` : ''}
       </div>
@@ -633,6 +682,26 @@ function renderDropCard(d) {
           </div>` : '<div class="supply-text">OPEN ACCESS</div>'}
         ${d.access_price > 0 ? `<div class="price-tag">${fmtMoney(d.access_price)}</div>` : '<div class="price-tag free">FREE</div>'}
         ${d.countdown_seconds > 0 ? `<div class="drop-countdown ${d.countdown_seconds < 3600 ? 'urgent' : ''}" data-cd="${d.countdown_seconds}">${fmtCountdown(d.countdown_seconds)}</div>` : ''}
+      </div>
+    </div>`;
+}
+
+function renderFeaturedCard(d) {
+  const cv = coverUrl(d);
+  const vel = d.velocity || 0;
+  const price = d.access_price > 0 ? fmtMoney(d.access_price) : 'FREE';
+  const coverStyle = !cv ? `background:${dropGradient(d.id)}` : '';
+  return `
+    <div class="featured-card" onclick="openDrop('${d.id}')">
+      <div class="featured-cover" style="${coverStyle}">
+        ${cv ? `<img src="${cv}" alt="">` : ''}
+        <div class="featured-overlay">
+          <div class="featured-live-dot">LIVE</div>
+          ${vel > 0 ? `<div class="featured-vel">${velEmoji(vel)}</div>` : ''}
+          <div class="featured-title">${esc(d.title)}</div>
+          <div class="featured-artist">@${esc(d.artist_name || 'unknown')}${d.artist_city ? ` · ${esc(d.artist_city)}` : ''}</div>
+          <div class="featured-price">${price}</div>
+        </div>
       </div>
     </div>`;
 }
@@ -695,7 +764,7 @@ function renderDropDetail() {
         ${owners.map((o, i) => `
           <div class="ledger-row">
             <div class="ledger-num">#${o.fan_number || (i+1)}</div>
-            <div class="ledger-avatar">${(o.username || '?')[0].toUpperCase()}</div>
+            <div class="ledger-avatar" style="background:${avatarColor(o.username)}">${(o.username || '?')[0].toUpperCase()}</div>
             <div class="ledger-name">@${esc(o.username)}</div>
             ${(o.fan_number || i+1) <= 10 ? `<span class="badge badge-red">FIRST ${o.fan_number || i+1}</span>` : ''}
           </div>
@@ -713,8 +782,8 @@ function renderDropDetail() {
       ${firstNBadge}
       <div class="drop-detail-layout">
         <div class="detail-cover-sticky">
-          <div class="detail-cover-img">
-            ${cv ? `<img src="${cv}" alt="">` : '🎵'}
+          <div class="detail-cover-img${!cv ? ' gradient-cover' : ''}" ${!cv ? `style="background:${dropGradient(d.id)}"` : ''}>
+            ${cv ? `<img src="${cv}" alt="">` : `<span style="font-family:var(--font-mono);font-size:11px;letter-spacing:1px;opacity:0.4">${esc(d.title || '').toUpperCase()}</span>`}
           </div>
           <div class="detail-type-bar" style="background:${typeMeta.color || '#333'}">
             <span>${typeMeta.label || d.drop_type?.toUpperCase()}</span>
@@ -723,13 +792,14 @@ function renderDropDetail() {
           ${d.boost_active ? `<div class="boost-active-bar">🚀 BOOSTED DROP</div>` : ''}
           ${hasAccess && d.audio_path ? renderAudioPlayer(d.id) : ''}
           ${!hasAccess && d.audio_path ? `
-            <div class="audio-player">
-              <div class="player-row">
+            <div class="waveform-player">
+              <div class="waveform-top">
                 <button class="play-btn" disabled>🔒</button>
-                <div class="player-progress"><div class="progress-track"></div>
-                  <div class="player-times"><span>Claim access to listen</span></div>
+                <div class="waveform-wrap" style="opacity:0.35">
+                  <div class="waveform-bars">${generateWaveBars(d.id)}</div>
                 </div>
               </div>
+              <div class="waveform-times"><span>Claim access to listen</span></div>
             </div>` : ''}
         </div>
         <div>
@@ -760,7 +830,7 @@ function renderDropDetail() {
           ${d.description ? `<p class="text-gray text-sm" style="margin-bottom:20px;line-height:1.7">${esc(d.description)}</p>` : ''}
 
           <div class="artist-card">
-            <div class="artist-avatar">${(d.artist_name || '?')[0].toUpperCase()}</div>
+            <div class="artist-avatar" style="background:${avatarColor(d.artist_name)}">${(d.artist_name || '?')[0].toUpperCase()}</div>
             <div style="flex:1">
               <div style="font-weight:600">@${esc(d.artist_name || 'unknown')}</div>
               <div class="text-gray text-sm">${esc(d.artist_city || '')}</div>
@@ -782,18 +852,16 @@ function renderDropDetail() {
 
 function renderAudioPlayer(dropId) {
   return `
-    <div class="audio-player" id="audio-player">
-      <div class="player-row">
+    <div class="waveform-player" id="audio-player">
+      <div class="waveform-top">
         <button class="play-btn" id="play-btn" onclick="togglePlay('${dropId}')">▶</button>
-        <div class="player-progress">
-          <div class="progress-track" id="progress-track" onclick="seekAudio(event)">
-            <div class="progress-fill" id="progress-fill"></div>
-          </div>
-          <div class="player-times">
-            <span id="cur-time">0:00</span>
-            <span id="tot-time">0:00</span>
-          </div>
+        <div class="waveform-wrap" id="progress-track" onclick="seekAudio(event)">
+          <div class="waveform-bars">${generateWaveBars(dropId)}</div>
         </div>
+      </div>
+      <div class="waveform-times">
+        <span id="cur-time">0:00</span>
+        <span id="tot-time">0:00</span>
       </div>
     </div>`;
 }
@@ -872,16 +940,27 @@ window.subscribeToArtist = async function(artistId) {
 // ============================================================
 // AUDIO
 // ============================================================
+function _syncWaveformUI() {
+  const player = document.getElementById('audio-player');
+  const btn    = document.getElementById('play-btn');
+  if (player) player.classList.toggle('playing', state.playing);
+  if (btn)    btn.textContent = state.playing ? '⏸' : '▶';
+}
+
 window.togglePlay = function(dropId) {
   if (!state.audio || state.playingDropId !== dropId) {
     state.audio?.pause();
     state.audio = new Audio(`/api/audio/${dropId}`);
     state.playingDropId = dropId;
     state.audio.addEventListener('timeupdate', () => {
-      const fill = document.getElementById('progress-fill');
-      const cur = document.getElementById('cur-time');
-      if (fill && state.audio) fill.style.width = `${(state.audio.currentTime / state.audio.duration) * 100}%`;
-      if (cur && state.audio) cur.textContent = fmtTime(state.audio.currentTime);
+      if (!state.audio) return;
+      const pct = state.audio.duration
+        ? (state.audio.currentTime / state.audio.duration) * 100
+        : 0;
+      const track = document.getElementById('progress-track');
+      const cur   = document.getElementById('cur-time');
+      if (track) track.style.setProperty('--progress', `${pct}%`);
+      if (cur)   cur.textContent = fmtTime(state.audio.currentTime);
     });
     state.audio.addEventListener('loadedmetadata', () => {
       const tot = document.getElementById('tot-time');
@@ -889,8 +968,7 @@ window.togglePlay = function(dropId) {
     });
     state.audio.addEventListener('ended', () => {
       state.playing = false;
-      const btn = document.getElementById('play-btn');
-      if (btn) btn.textContent = '▶';
+      _syncWaveformUI();
       logEngage(dropId, 'replay');
     });
     state.audio.play();
@@ -901,15 +979,16 @@ window.togglePlay = function(dropId) {
   } else {
     state.audio.play(); state.playing = true;
   }
-  const btn = document.getElementById('play-btn');
-  if (btn) btn.textContent = state.playing ? '⏸' : '▶';
+  _syncWaveformUI();
 };
 
 window.seekAudio = function(e) {
-  if (!state.audio) return;
+  if (!state.audio || !state.audio.duration) return;
   const track = document.getElementById('progress-track');
+  if (!track) return;
   const rect = track.getBoundingClientRect();
-  state.audio.currentTime = ((e.clientX - rect.left) / rect.width) * state.audio.duration;
+  const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  state.audio.currentTime = fraction * state.audio.duration;
 };
 
 async function logEngage(dropId, action, meta = {}) {
@@ -956,7 +1035,7 @@ function renderFanProfile() {
     <div class="profile-layout">
       <div class="profile-sidebar">
         <div class="profile-card">
-          <div class="profile-avatar-xl">${(u.username || '?')[0].toUpperCase()}</div>
+          <div class="profile-avatar-xl" style="background:${avatarColor(u.username)}">${(u.username || '?')[0].toUpperCase()}</div>
           <div class="profile-username">@${esc(u.username)}</div>
           <div style="margin-bottom:8px">${roleBadge(u.role)}</div>
           <div class="profile-city">${esc(u.city || '')}</div>
@@ -1247,7 +1326,7 @@ function renderArtistProfile() {
     <div class="profile-layout">
       <div class="profile-sidebar">
         <div class="profile-card">
-          <div class="profile-avatar-xl">${(u.username||'?')[0].toUpperCase()}</div>
+          <div class="profile-avatar-xl" style="background:${avatarColor(u.username)}">${(u.username||'?')[0].toUpperCase()}</div>
           <div class="profile-username">@${esc(u.username)}</div>
           <div style="margin-bottom:8px">${roleBadge(u.role)}</div>
           <div class="profile-city">${esc(u.city||'')}</div>
@@ -1326,7 +1405,7 @@ async function loadLabelRoster() {
       ? `<div class="roster-grid">${roster.map(a => `
           <div class="roster-card">
             <div class="top">
-              <div class="artist-avatar">${(a.username||'?')[0].toUpperCase()}</div>
+              <div class="artist-avatar" style="background:${avatarColor(a.username)}">${(a.username||'?')[0].toUpperCase()}</div>
               <div><div class="name">@${esc(a.username)}</div><div class="text-gray text-sm">${esc(a.city||'')}</div></div>
             </div>
             <div class="roster-stats">
@@ -2091,7 +2170,7 @@ async function loadFanFollowing() {
         ? `<div class="roster-grid">${following.map(u => `
             <div class="roster-card" style="cursor:default">
               <div class="top">
-                <div class="artist-avatar">${(u.username||'?')[0].toUpperCase()}</div>
+                <div class="artist-avatar" style="background:${avatarColor(u.username)}">${(u.username||'?')[0].toUpperCase()}</div>
                 <div>
                   <div class="name">@${esc(u.username)}</div>
                   <div class="text-gray text-sm">${esc(u.city||'')}</div>
@@ -2247,7 +2326,7 @@ window.loadDropAnalytics = async function(dropId) {
           <div class="roster-grid">
             ${data.recent_claimers.map(c => `
               <div class="roster-card" style="padding:12px">
-                <div class="artist-avatar" style="width:32px;height:32px;font-size:14px">${(c.username||'?')[0].toUpperCase()}</div>
+                <div class="artist-avatar" style="width:32px;height:32px;font-size:14px;background:${avatarColor(c.username)}">${(c.username||'?')[0].toUpperCase()}</div>
                 <div><div class="text-sm">@${esc(c.username)}</div>${c.fan_number ? `<div class="text-gray text-sm">Fan #${c.fan_number}</div>` : ''}</div>
               </div>`).join('')}
           </div>` : ''}

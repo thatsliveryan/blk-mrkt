@@ -940,3 +940,292 @@ img { max-width: 100%; display: block; }
   font-weight: 700;
   margin-bottom: 12px;
 }
+
+/* ============================================================
+   DESIGN UPGRADE — Waveform, Live Glow, Featured Rail, etc.
+   ============================================================ */
+
+/* --- Task 3: Waveform Audio Player --- */
+.waveform-player {
+  background: var(--black-3);
+  border: 1px solid var(--black-4);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 18px;
+}
+.waveform-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 8px;
+}
+.waveform-wrap {
+  flex: 1;
+  height: 52px;
+  position: relative;
+  cursor: pointer;
+  --progress: 0%;
+}
+.waveform-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 100%;
+}
+.wave-bar {
+  flex: 1;
+  background: var(--gray-dark);
+  border-radius: 2px 2px 0 0;
+  transition: background 0.15s;
+  transform-origin: bottom;
+}
+/* Playing: bars turn red, staggered bounce animation */
+.waveform-player.playing .wave-bar {
+  background: var(--red);
+}
+.waveform-player.playing .wave-bar:nth-child(3n)   { animation: waveBounce 0.7s ease-in-out infinite; }
+.waveform-player.playing .wave-bar:nth-child(3n+1) { animation: waveBounce 0.7s ease-in-out 0.23s infinite; }
+.waveform-player.playing .wave-bar:nth-child(3n+2) { animation: waveBounce 0.7s ease-in-out 0.46s infinite; }
+@keyframes waveBounce {
+  0%, 100% { transform: scaleY(1); }
+  50%       { transform: scaleY(1.18); }
+}
+/* Dim overlay for "not yet played" portion */
+.waveform-wrap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to right,
+    transparent var(--progress),
+    rgba(0,0,0,0.62) var(--progress)
+  );
+  pointer-events: none;
+  border-radius: 2px;
+}
+.waveform-times {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--gray-mid);
+}
+
+/* --- Task 4: Live Drop Pulse Glow --- */
+.drop-card.live-drop {
+  border-color: rgba(255, 45, 45, 0.35);
+  box-shadow: 0 0 12px rgba(255, 45, 45, 0.08);
+}
+.drop-card.live-drop .status-badge.live {
+  animation: liveBadgePulse 1.8s ease-in-out infinite;
+}
+@keyframes liveBadgePulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(255,45,45,0.5); }
+  50%       { opacity: 0.75; box-shadow: 0 0 0 4px rgba(255,45,45,0); }
+}
+
+/* --- Task 5: Gradient placeholders — no-cover becomes transparent to show gradient bg --- */
+.drop-card .no-cover,
+.detail-cover-img.gradient-cover {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  padding: 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: rgba(255,255,255,0.3);
+  letter-spacing: 1px;
+}
+
+/* --- Task 6: Auth page cinematic background --- */
+.auth-screen {
+  background:
+    radial-gradient(ellipse 90% 55% at 50% 0%, rgba(255,45,45,0.10) 0%, transparent 68%),
+    var(--black);
+}
+.auth-logo {
+  text-shadow: 0 0 60px rgba(255,45,45,0.25);
+}
+.auth-card {
+  box-shadow: 0 24px 64px rgba(0,0,0,0.6);
+}
+
+/* --- Task 7: Typography peaks --- */
+.detail-title {
+  font-size: 36px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  line-height: 1.1;
+  letter-spacing: -0.5px;
+}
+@media (max-width: 768px) {
+  .detail-title { font-size: 26px; }
+}
+/* Scoreboard countdown */
+.detail-countdown {
+  font-family: var(--font-mono);
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--red);
+  letter-spacing: 4px;
+  margin-bottom: 16px;
+  background: rgba(255,45,45,0.06);
+  border: 1px solid rgba(255,45,45,0.18);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.detail-countdown::before {
+  content: '⏱';
+  font-size: 16px;
+}
+.detail-countdown.urgent {
+  animation: cdUrgent 0.8s ease-in-out infinite;
+  border-color: var(--red);
+  background: rgba(255,45,45,0.12);
+}
+@keyframes cdUrgent {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}
+
+/* --- Task 8: Role-aware color accents --- */
+/* Fan gets cyan accent on nav/tabs */
+[data-role="fan"] .sidebar-role-tag        { color: #00C8FF; }
+[data-role="fan"] .nav-item.active         { border-left-color: #00C8FF; background: rgba(0,200,255,0.07); }
+[data-role="fan"] .tab.active              { border-bottom-color: #00C8FF; color: var(--white); }
+[data-role="fan"] .bnav-item.active        { border-top-color: #00C8FF; color: var(--white); }
+[data-role="fan"] .chip-avatar             { background: #00C8FF; color: var(--black); }
+
+/* Admin gets steel blue */
+[data-role="admin"] .sidebar-role-tag      { color: #4A90D9; }
+[data-role="admin"] .nav-item.active       { border-left-color: #4A90D9; background: rgba(74,144,217,0.08); }
+[data-role="admin"] .tab.active            { border-bottom-color: #4A90D9; color: var(--white); }
+[data-role="admin"] .bnav-item.active      { border-top-color: #4A90D9; color: var(--white); }
+[data-role="admin"] .chip-avatar           { background: #4A90D9; }
+
+/* Label gets orange */
+[data-role="label"] .sidebar-role-tag      { color: var(--orange); }
+[data-role="label"] .nav-item.active       { border-left-color: var(--orange); background: rgba(255,140,0,0.07); }
+[data-role="label"] .tab.active            { border-bottom-color: var(--orange); }
+[data-role="label"] .bnav-item.active      { border-top-color: var(--orange); }
+[data-role="label"] .chip-avatar           { background: var(--orange); color: var(--black); }
+
+/* --- Task 9: Fan discovery featured rail --- */
+.featured-rail-header {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--gray-mid);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.featured-rail {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 28px;
+}
+@media (max-width: 768px) {
+  .featured-rail { grid-template-columns: repeat(2, 1fr); }
+}
+.featured-card {
+  cursor: pointer;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  position: relative;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  border: 1px solid rgba(255,45,45,0.2);
+}
+.featured-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 32px rgba(255,45,45,0.15);
+}
+.featured-cover {
+  position: relative;
+  aspect-ratio: 4/3;
+  overflow: hidden;
+  background: var(--black-3);
+}
+.featured-cover img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s ease;
+}
+.featured-card:hover .featured-cover img { transform: scale(1.04); }
+.featured-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.25) 55%, transparent 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 14px;
+}
+.featured-live-dot {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--red);
+  color: #fff;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 3px 8px 3px 6px;
+  border-radius: 20px;
+}
+.featured-live-dot::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  background: #fff;
+  border-radius: 50%;
+  animation: featuredPulseDot 1.2s ease-in-out infinite;
+}
+@keyframes featuredPulseDot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+.featured-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--white);
+  margin-bottom: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.featured-artist {
+  font-size: 11px;
+  color: rgba(255,255,255,0.65);
+  font-family: var(--font-mono);
+}
+.featured-vel {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 16px;
+}
+.featured-price {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: rgba(255,255,255,0.5);
+  margin-top: 3px;
+}
+/* More drops label */
+.more-drops-hdr {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--gray-dark);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
