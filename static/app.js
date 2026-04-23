@@ -1886,16 +1886,19 @@ async function loadArtistBoosts() {
     const tiersEl = document.getElementById('boost-tiers-grid');
     const tiers = tiersData.tiers || {};
     if (tiersEl) {
-      tiersEl.innerHTML = Object.entries(tiers).map(([key, t]) => `
+      tiersEl.innerHTML = Object.entries(tiers).map(([key, t]) => {
+        const dollars = (t.budget_cents / 100).toFixed(0);
+        return `
         <div class="boost-tier-card">
           <div class="boost-tier-name">${t.label}</div>
-          <div class="boost-tier-price">$${t.price}</div>
+          <div class="boost-tier-price">$${dollars}</div>
           <div class="text-gray text-sm">${t.duration_hours}h amplification</div>
-          <button class="btn btn-primary btn-full" style="margin-top:12px" onclick="showBoostModal('${key}','${t.label}',${t.price})">
-            BOOST FOR $${t.price}
+          <button class="btn btn-primary btn-full" style="margin-top:12px" onclick="showBoostModal('${key}','${t.label}',${t.budget_cents})">
+            BOOST FOR $${dollars}
           </button>
         </div>
-      `).join('');
+        `;
+      }).join('');
     }
 
     const boostsEl = document.getElementById('my-boosts');
@@ -1920,19 +1923,20 @@ async function loadArtistBoosts() {
   } catch (e) {}
 }
 
-window.showBoostModal = async function(tier, label, price) {
+window.showBoostModal = async function(tier, label, budgetCents) {
   // Load the artist's live drops to pick from
   try {
     const data = await API.json('/drops/my?status=live');
     const drops = data.drops || [];
     if (!drops.length) { toast('No live drops to boost. Create and publish a drop first.', 'error'); return; }
 
+    const dollars = (budgetCents / 100).toFixed(0);
     const options = drops.map(d => `<option value="${d.id}">${esc(d.title)} (vel: ${d.velocity||0})</option>`).join('');
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
     modal.innerHTML = `
       <div class="modal">
-        <div class="modal-title">Boost with ${label} — $${price}</div>
+        <div class="modal-title">Boost with ${label} — $${dollars}</div>
         <div class="form-group">
           <label class="form-label">Select Drop to Boost</label>
           <select id="boost-drop-select">${options}</select>
@@ -1943,7 +1947,7 @@ window.showBoostModal = async function(tier, label, price) {
         </div>
         <div class="text-gray text-sm" style="margin-bottom:16px">Note: Drop must have organic engagement (velocity ≥ 0.5) to be boosted.</div>
         <div class="flex gap-2">
-          <button class="btn btn-primary" onclick="submitBoost('${tier}')">CONFIRM BOOST — $${price}</button>
+          <button class="btn btn-primary" onclick="submitBoost('${tier}')">CONFIRM BOOST — $${dollars}</button>
           <button class="btn btn-ghost" onclick="document.querySelector('.modal-overlay').remove()">Cancel</button>
         </div>
       </div>`;
